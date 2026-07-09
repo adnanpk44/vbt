@@ -12,6 +12,7 @@ class FlutterWidgetInspector {
     Offset globalPosition, {
     BuildContext? routeContext,
     GlobalKey? boundaryKey,
+    RenderObject? excludeSubtreeRoot,
   }) {
     final result = HitTestResult();
     final views = WidgetsBinding.instance.platformDispatcher.views;
@@ -28,6 +29,7 @@ class FlutterWidgetInspector {
       if (target is! RenderBox) continue;
       if (target is RenderView) continue;
       if (boundaryObject != null && !_isDescendantOf(target, boundaryObject)) continue;
+      if (excludeSubtreeRoot != null && _isDescendantOf(target, excludeSubtreeRoot)) continue;
       if (!_isInspectableBox(target)) continue;
 
       final label = _widgetLabel(target);

@@ -46,6 +46,7 @@ class _VibeBugCaptureOverlayState extends State<VibeBugCaptureOverlay> {
   final List<VibeBugScreenshotShot> _draftShots = [];
   bool _submitting = false;
   OverlayEntry? _pickerOverlay;
+  final _pickerOverlayKey = GlobalKey();
 
   @override
   void initState() {
@@ -132,11 +133,15 @@ class _VibeBugCaptureOverlayState extends State<VibeBugCaptureOverlay> {
     });
   }
 
+  RenderObject? get _pickerExcludeRoot =>
+      _pickerOverlayKey.currentContext?.findRenderObject();
+
   void _updateHover(Offset globalPosition) {
     final hit = _inspector.hitTestAt(
       globalPosition,
       routeContext: _sheetContext,
       boundaryKey: widget.boundaryKey,
+      excludeSubtreeRoot: _pickerExcludeRoot,
     );
     if (!mounted) return;
     if (hit?.selector != _hoverHit?.selector ||
@@ -148,11 +153,15 @@ class _VibeBugCaptureOverlayState extends State<VibeBugCaptureOverlay> {
 
   Future<void> _captureAt(Offset globalPosition) async {
     if (_capturing) return;
-    final hit = _inspector.hitTestAt(
-      globalPosition,
-      routeContext: _sheetContext,
-      boundaryKey: widget.boundaryKey,
-    );
+
+    final hit = _hoverHit ??
+        _inspector.hitTestAt(
+          globalPosition,
+          routeContext: _sheetContext,
+          boundaryKey: widget.boundaryKey,
+          excludeSubtreeRoot: _pickerExcludeRoot,
+        );
+
     _stopPicking();
     if (hit == null) {
       _showSnack('Could not identify a widget at that position.');
@@ -182,7 +191,7 @@ class _VibeBugCaptureOverlayState extends State<VibeBugCaptureOverlay> {
       return;
     }
 
-    final note = await _promptCaptureNote(hit);
+    final note = await _promptCaptureNote(hit, pair.selectedDataUrl);
     if (!mounted) return;
     if (note == null) return;
 
@@ -211,18 +220,31 @@ class _VibeBugCaptureOverlayState extends State<VibeBugCaptureOverlay> {
     });
 
     if (_draftShots.length < _maxCaptures) {
-      final addAnother = await _askAddAnother();
-      if (addAnother == true && mounted) {
-        _startPicking();
-      } else if (mounted) {
-        await _openSubmitSheet();
-      }
+      _showCaptureSavedSnack();
     } else {
       await _openSubmitSheet();
     }
   }
 
-  Future<String?> _promptCaptureNote(FlutterWidgetHit hit) async {
+  void _showCaptureSavedSnack() {
+    final navContext = _sheetContext;
+    if (navContext == null || !navContext.mounted) return;
+    ScaffoldMessenger.of(navContext).hideCurrentSnackBar();
+    ScaffoldMessenger.of(navContext).showSnackBar(
+      SnackBar(
+        content: Text(
+          '${_draftShots.length}/$_maxCaptures captured. Navigate to another screen, then tap Report to add more.',
+        ),
+        duration: const Duration(seconds: 5),
+        action: SnackBarAction(
+          label: 'Review & send',
+          onPressed: () => unawaited(_openSubmitSheet()),
+        ),
+      ),
+    );
+  }
+
+  Future<String?> _promptCaptureNote(FlutterWidgetHit hit, String previewDataUrl) async {
     final navContext = _sheetContext;
     if (navContext == null) return null;
 
@@ -249,6 +271,11 @@ class _VibeBugCaptureOverlayState extends State<VibeBugCaptureOverlay> {
               const SizedBox(height: 8),
               Text('Widget: ${hit.widgetType}', style: Theme.of(ctx).textTheme.bodySmall),
               const SizedBox(height: 8),
+              ClipRRect(
+                borderRadius: BorderRadius.circular(8),
+                child: _CaptureThumbnail(dataUrl: previewDataUrl, width: double.infinity, height: 140),
+              ),
+              const SizedBox(height: 8),
               TextField(
                 controller: controller,
                 maxLines: 3,
@@ -269,22 +296,6 @@ class _VibeBugCaptureOverlayState extends State<VibeBugCaptureOverlay> {
           ),
         );
       },
-    );
-  }
-
-  Future<bool?> _askAddAnother() async {
-    final navContext = _sheetContext;
-    if (navContext == null) return false;
-    return showDialog<bool>(
-      context: navContext,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Capture saved'),
-        content: Text('${_draftShots.length}/$_maxCaptures screenshots added. Select another widget?'),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Review & send')),
-          FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Add another')),
-        ],
-      ),
     );
   }
 
@@ -417,6 +428,7 @@ class _VibeBugCaptureOverlayState extends State<VibeBugCaptureOverlay> {
     final topPadding = MediaQuery.paddingOf(overlayContext).top;
 
     return Positioned.fill(
+      key: _pickerOverlayKey,
       child: Material(
         type: MaterialType.transparency,
         child: Stack(
@@ -499,13 +511,8 @@ class _VibeBugCaptureOverlayState extends State<VibeBugCaptureOverlay> {
             draftCount: _draftShots.length,
             onOffsetChanged: _onBubbleMoved,
             onDragEnd: _onBubbleDragEnded,
-            onTap: () {
-              if (_draftShots.isNotEmpty) {
-                unawaited(_openSubmitSheet());
-              } else {
-                _startPicking();
-              }
-            },
+            onTap: _startPicking,
+            onReview: () => unawaited(_openSubmitSheet()),
             onLongPress: () {
               if (_draftShots.isNotEmpty) {
                 setState(() => _draftShots.clear());
@@ -526,6 +533,7 @@ class _DraggableReportBubble extends StatefulWidget {
     required this.onOffsetChanged,
     required this.onDragEnd,
     required this.onTap,
+    required this.onReview,
     required this.onLongPress,
   });
 
@@ -534,6 +542,7 @@ class _DraggableReportBubble extends StatefulWidget {
   final ValueChanged<Offset> onOffsetChanged;
   final ValueChanged<Offset> onDragEnd;
   final VoidCallback onTap;
+  final VoidCallback onReview;
   final VoidCallback onLongPress;
 
   @override
@@ -576,70 +585,79 @@ class _DraggableReportBubbleState extends State<_DraggableReportBubble> {
     return Positioned(
       left: dx,
       top: dy,
-      child: Listener(
-        behavior: HitTestBehavior.opaque,
-        onPointerDown: (event) {
-          _activePointer = event.pointer;
-          _dragOrigin = widget.offset;
-          _panTotal = Offset.zero;
-          _lastDragOffset = widget.offset;
-          _dragging = false;
-          _longPressFired = false;
-          _longPressTimer?.cancel();
-          _longPressTimer = Timer(const Duration(milliseconds: 500), () {
-            if (_activePointer != null && !_dragging) {
-              _longPressFired = true;
-              widget.onLongPress();
-            }
-          });
-        },
-        onPointerMove: (event) {
-          if (event.pointer != _activePointer || _dragOrigin == null) return;
-          _panTotal += event.delta;
-          if (!_dragging && _panTotal.distance < _bubbleDragSlop) return;
-          if (!_dragging) {
-            _longPressTimer?.cancel();
-            _dragging = true;
-          }
-          final next = Offset(
-            (_dragOrigin!.dx + _panTotal.dx).clamp(8.0, maxX),
-            (_dragOrigin!.dy + _panTotal.dy).clamp(padding.top + 8, maxY),
-          );
-          _lastDragOffset = next;
-          widget.onOffsetChanged(next);
-        },
-        onPointerUp: (event) {
-          if (event.pointer != _activePointer) return;
-          _longPressTimer?.cancel();
-          if (!_longPressFired) {
-            if (!_dragging) {
-              widget.onTap();
-            } else if (_lastDragOffset != null) {
-              widget.onDragEnd(_lastDragOffset!);
-            }
-          }
-          _resetPointer();
-        },
-        onPointerCancel: (event) {
-          if (event.pointer != _activePointer) return;
-          _longPressTimer?.cancel();
-          _resetPointer();
-        },
-        child: Material(
-          elevation: 6,
-          color: const Color(0xFF111827),
-          shape: const StadiumBorder(),
-          child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                const Icon(Icons.bug_report_outlined, color: Color(0xFFBEF264), size: 18),
+      child: Material(
+        elevation: 6,
+        color: const Color(0xFF111827),
+        shape: const StadiumBorder(),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Listener(
+                behavior: HitTestBehavior.opaque,
+                onPointerDown: (event) {
+                  _activePointer = event.pointer;
+                  _dragOrigin = widget.offset;
+                  _panTotal = Offset.zero;
+                  _lastDragOffset = widget.offset;
+                  _dragging = false;
+                  _longPressFired = false;
+                  _longPressTimer?.cancel();
+                  _longPressTimer = Timer(const Duration(milliseconds: 500), () {
+                    if (_activePointer != null && !_dragging) {
+                      _longPressFired = true;
+                      widget.onLongPress();
+                    }
+                  });
+                },
+                onPointerMove: (event) {
+                  if (event.pointer != _activePointer || _dragOrigin == null) return;
+                  _panTotal += event.delta;
+                  if (!_dragging && _panTotal.distance < _bubbleDragSlop) return;
+                  if (!_dragging) {
+                    _longPressTimer?.cancel();
+                    _dragging = true;
+                  }
+                  final next = Offset(
+                    (_dragOrigin!.dx + _panTotal.dx).clamp(8.0, maxX),
+                    (_dragOrigin!.dy + _panTotal.dy).clamp(padding.top + 8, maxY),
+                  );
+                  _lastDragOffset = next;
+                  widget.onOffsetChanged(next);
+                },
+                onPointerUp: (event) {
+                  if (event.pointer != _activePointer) return;
+                  _longPressTimer?.cancel();
+                  if (!_longPressFired) {
+                    if (!_dragging) {
+                      widget.onTap();
+                    } else if (_lastDragOffset != null) {
+                      widget.onDragEnd(_lastDragOffset!);
+                    }
+                  }
+                  _resetPointer();
+                },
+                onPointerCancel: (event) {
+                  if (event.pointer != _activePointer) return;
+                  _longPressTimer?.cancel();
+                  _resetPointer();
+                },
+                child: const Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.bug_report_outlined, color: Color(0xFFBEF264), size: 18),
+                    SizedBox(width: 8),
+                    Text('Report', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w600)),
+                  ],
+                ),
+              ),
+              if (widget.draftCount > 0) ...[
                 const SizedBox(width: 8),
-                const Text('Report', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w600)),
-                if (widget.draftCount > 0) ...[
-                  const SizedBox(width: 8),
-                  CircleAvatar(
+                Listener(
+                  behavior: HitTestBehavior.opaque,
+                  onPointerUp: (_) => widget.onReview(),
+                  child: CircleAvatar(
                     radius: 10,
                     backgroundColor: const Color(0xFFBEF264),
                     child: Text(
@@ -647,9 +665,9 @@ class _DraggableReportBubbleState extends State<_DraggableReportBubble> {
                       style: const TextStyle(fontSize: 11, color: Colors.black, fontWeight: FontWeight.bold),
                     ),
                   ),
-                ],
+                ),
               ],
-            ),
+            ],
           ),
         ),
       ),
@@ -658,20 +676,26 @@ class _DraggableReportBubbleState extends State<_DraggableReportBubble> {
 }
 
 class _CaptureThumbnail extends StatelessWidget {
-  const _CaptureThumbnail({required this.dataUrl});
+  const _CaptureThumbnail({
+    required this.dataUrl,
+    this.width = 72,
+    this.height = 72,
+  });
 
   final String dataUrl;
+  final double width;
+  final double height;
 
   @override
   Widget build(BuildContext context) {
     try {
       final encoded = dataUrl.contains(',') ? dataUrl.split(',').last : dataUrl;
       final bytes = base64Decode(encoded);
-      return Image.memory(bytes, width: 72, height: 72, fit: BoxFit.cover);
+      return Image.memory(bytes, width: width, height: height, fit: BoxFit.cover);
     } catch (_) {
       return Container(
-        width: 72,
-        height: 72,
+        width: width,
+        height: height,
         color: Colors.black12,
         alignment: Alignment.center,
         child: const Icon(Icons.image_not_supported_outlined, size: 18),

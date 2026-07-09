@@ -13,11 +13,16 @@ class VibeBugScreenshotCapture {
   /// Caps GPU memory use on high-DPI phones (e.g. 480dpi Android).
   static const double maxPixelRatio = 2.0;
 
+  /// Padding around the selected widget in logical pixels.
+  static const double defaultSelectionPadding = 12;
+
   Future<({String fullDataUrl, String selectedDataUrl})?> capturePair({
     required GlobalKey boundaryKey,
     required Rect globalRect,
     double pixelRatio = 1,
+    double selectionPadding = defaultSelectionPadding,
   }) async {
+    await _waitForNextFrame();
     await _waitForNextFrame();
 
     final boundary = boundaryKey.currentContext?.findRenderObject();
@@ -34,15 +39,16 @@ class VibeBugScreenshotCapture {
       }
 
       final boundaryOffset = boundary.localToGlobal(Offset.zero);
+      final paddedGlobal = globalRect.inflate(selectionPadding);
       final localRect = Rect.fromLTWH(
-        globalRect.left - boundaryOffset.dx,
-        globalRect.top - boundaryOffset.dy,
-        globalRect.width,
-        globalRect.height,
+        paddedGlobal.left - boundaryOffset.dx,
+        paddedGlobal.top - boundaryOffset.dy,
+        paddedGlobal.width,
+        paddedGlobal.height,
       );
 
       final clamped = _clampRect(localRect, Size(boundary.size.width, boundary.size.height));
-      if (clamped.width < 2 || clamped.height < 2) {
+      if (clamped.width < 4 || clamped.height < 4) {
         fullImage.dispose();
         return (fullDataUrl: fullDataUrl, selectedDataUrl: fullDataUrl);
       }
