@@ -793,116 +793,117 @@ class _SubmitIssueSheetState extends State<_SubmitIssueSheet> {
     const decoration = InputDecoration(
       border: OutlineInputBorder(),
       isDense: true,
+      contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 10),
     );
 
     return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Row(
-          children: [
-            Expanded(
-              child: DropdownButtonFormField<String>(
-                key: ValueKey('project-$_projectId-${_projects.length}'),
-                initialValue:
-                    _projects.any((project) => project.id == _projectId)
-                        ? _projectId
-                        : null,
-                items: _projects
-                    .map((project) => DropdownMenuItem(
-                          value: project.id,
-                          child: Text(project.name,
-                              overflow: TextOverflow.ellipsis),
-                        ))
-                    .toList(),
-                onChanged: _loadingTarget
-                    ? null
-                    : (value) {
-                        if (value != null) unawaited(_changeProject(value));
-                      },
-                decoration: decoration.copyWith(labelText: 'Project'),
-              ),
-            ),
-            const SizedBox(width: 8),
-            Expanded(
-              child: DropdownButtonFormField<String>(
-                key: ValueKey('board-$_projectId-$_boardId-${_boards.length}'),
-                initialValue: _boards.any((board) => board.id == _boardId)
-                    ? _boardId
-                    : null,
-                items: _boards
-                    .map((board) => DropdownMenuItem(
-                          value: board.id,
-                          child: Text(
-                            board.cardCount > 0
-                                ? '${board.name} (${board.cardCount})'
-                                : board.name,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ))
-                    .toList(),
-                onChanged: _loadingTarget
-                    ? null
-                    : (value) => setState(() {
-                          _boardId = value;
-                          if (value != null) VibeBug.selectBoard(value);
-                        }),
-                decoration: decoration.copyWith(labelText: 'Board'),
-              ),
-            ),
-          ],
+        _targetDropdown<String>(
+          key: ValueKey('project-$_projectId-${_projects.length}'),
+          value: _projects.any((project) => project.id == _projectId)
+              ? _projectId
+              : null,
+          labels: _projects.map((project) => project.name).toList(),
+          values: _projects.map((project) => project.id).toList(),
+          onChanged: _loadingTarget
+              ? null
+              : (value) {
+                  if (value != null) unawaited(_changeProject(value));
+                },
+          decoration: decoration.copyWith(labelText: 'Project'),
         ),
         const SizedBox(height: 8),
-        Row(
-          children: [
-            Expanded(
-              child: DropdownButtonFormField<String>(
-                key: ValueKey(
-                    'developer-$_projectId-$_developerId-${_developers.length}'),
-                initialValue:
-                    _developers.any((developer) => developer.id == _developerId)
-                        ? _developerId
-                        : null,
-                items: _developers
-                    .map((developer) => DropdownMenuItem(
-                          value: developer.id,
-                          child: Text(developer.name,
-                              overflow: TextOverflow.ellipsis),
-                        ))
-                    .toList(),
-                onChanged: _loadingTarget
-                    ? null
-                    : (value) => setState(() {
-                          _developerId = value;
-                          if (value != null) VibeBug.selectDeveloper(value);
-                        }),
-                decoration: decoration.copyWith(labelText: 'Developer'),
-              ),
-            ),
-            const SizedBox(width: 8),
-            SizedBox(
-              width: 136,
-              child: DropdownButtonFormField<String>(
-                key: ValueKey('priority-$_priority'),
-                initialValue: _priority,
-                items: const [
-                  DropdownMenuItem(value: 'low', child: Text('Low')),
-                  DropdownMenuItem(value: 'medium', child: Text('Medium')),
-                  DropdownMenuItem(value: 'high', child: Text('High')),
-                  DropdownMenuItem(
-                      value: 'immediate', child: Text('Immediate')),
-                ],
-                onChanged: _loadingTarget
-                    ? null
-                    : (value) => setState(() => _priority = value ?? 'medium'),
-                decoration: decoration.copyWith(labelText: 'Priority'),
-              ),
-            ),
-          ],
+        _targetDropdown<String>(
+          key: ValueKey('board-$_projectId-$_boardId-${_boards.length}'),
+          value: _boards.any((board) => board.id == _boardId) ? _boardId : null,
+          labels: _boards
+              .map((board) => board.cardCount > 0
+                  ? '${board.name} (${board.cardCount})'
+                  : board.name)
+              .toList(),
+          values: _boards.map((board) => board.id).toList(),
+          onChanged: _loadingTarget
+              ? null
+              : (value) => setState(() {
+                    _boardId = value;
+                    if (value != null) VibeBug.selectBoard(value);
+                  }),
+          decoration: decoration.copyWith(labelText: 'Board'),
+        ),
+        const SizedBox(height: 8),
+        _targetDropdown<String>(
+          key: ValueKey(
+              'developer-$_projectId-$_developerId-${_developers.length}'),
+          value: _developers.any((developer) => developer.id == _developerId)
+              ? _developerId
+              : null,
+          labels: _developers.map((developer) => developer.name).toList(),
+          values: _developers.map((developer) => developer.id).toList(),
+          onChanged: _loadingTarget
+              ? null
+              : (value) => setState(() {
+                    _developerId = value;
+                    if (value != null) VibeBug.selectDeveloper(value);
+                  }),
+          decoration: decoration.copyWith(labelText: 'Developer'),
+        ),
+        const SizedBox(height: 8),
+        _targetDropdown<String>(
+          key: ValueKey('priority-$_priority'),
+          value: _priority,
+          labels: const ['Low', 'Medium', 'High', 'Immediate'],
+          values: const ['low', 'medium', 'high', 'immediate'],
+          onChanged: _loadingTarget
+              ? null
+              : (value) => setState(() => _priority = value ?? 'medium'),
+          decoration: decoration.copyWith(labelText: 'Priority'),
         ),
         if (_loadingTarget) ...[
           const SizedBox(height: 8),
           const LinearProgressIndicator(minHeight: 2),
         ],
       ],
+    );
+  }
+
+  Widget _targetDropdown<T>({
+    required Key key,
+    required T? value,
+    required List<String> labels,
+    required List<T> values,
+    required ValueChanged<T?>? onChanged,
+    required InputDecoration decoration,
+  }) {
+    assert(labels.length == values.length);
+    return DropdownButtonFormField<T>(
+      key: key,
+      isExpanded: true,
+      initialValue: value,
+      items: List<DropdownMenuItem<T>>.generate(
+        values.length,
+        (index) => DropdownMenuItem<T>(
+          value: values[index],
+          child: Text(
+            labels[index],
+            overflow: TextOverflow.ellipsis,
+            maxLines: 1,
+          ),
+        ),
+      ),
+      selectedItemBuilder: (context) => List<Widget>.generate(
+        values.length,
+        (index) => Align(
+          alignment: Alignment.centerLeft,
+          child: Text(
+            labels[index],
+            overflow: TextOverflow.ellipsis,
+            maxLines: 1,
+          ),
+        ),
+      ),
+      onChanged: onChanged,
+      decoration: decoration,
     );
   }
 
