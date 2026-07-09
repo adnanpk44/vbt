@@ -6,6 +6,13 @@ import 'package:flutter/scheduler.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/widgets.dart';
 
+/// Freehand highlight stroke in image logical coordinates.
+class VibeBugHighlightStroke {
+  const VibeBugHighlightStroke(this.points);
+
+  final List<Offset> points;
+}
+
 /// Captures screenshots from a [RepaintBoundary] and crops selected widget bounds.
 class VibeBugScreenshotCapture {
   const VibeBugScreenshotCapture();
@@ -16,11 +23,10 @@ class VibeBugScreenshotCapture {
   /// Padding around the selected widget in logical pixels.
   static const double defaultSelectionPadding = 12;
 
-  Future<({String fullDataUrl, String selectedDataUrl})?> capturePair({
+  /// Captures the full [RepaintBoundary] as a PNG data URL.
+  Future<({String fullDataUrl, Size logicalSize, double pixelRatio})?> captureFull({
     required GlobalKey boundaryKey,
-    required Rect globalRect,
     double pixelRatio = 1,
-    double selectionPadding = defaultSelectionPadding,
   }) async {
     await _waitForNextFrame();
     await _waitForNextFrame();
@@ -33,53 +39,131 @@ class VibeBugScreenshotCapture {
     try {
       final fullImage = await boundary.toImage(pixelRatio: ratio);
       final fullDataUrl = await _encodePngDataUrl(fullImage);
-      if (fullDataUrl.isEmpty) {
-        fullImage.dispose();
-        return null;
-      }
-
-      final boundaryOffset = boundary.localToGlobal(Offset.zero);
-      final paddedGlobal = globalRect.inflate(selectionPadding);
-      final localRect = Rect.fromLTWH(
-        paddedGlobal.left - boundaryOffset.dx,
-        paddedGlobal.top - boundaryOffset.dy,
-        paddedGlobal.width,
-        paddedGlobal.height,
-      );
-
-      final clamped = _clampRect(localRect, Size(boundary.size.width, boundary.size.height));
-      if (clamped.width < 4 || clamped.height < 4) {
-        fullImage.dispose();
-        return (fullDataUrl: fullDataUrl, selectedDataUrl: fullDataUrl);
-      }
-
-      final selectedImage = await _cropImage(fullImage, clamped, ratio);
-      final selectedDataUrl = await _encodePngDataUrl(selectedImage);
+      final logicalSize = boundary.size;
       fullImage.dispose();
-      selectedImage.dispose();
-
-      if (selectedDataUrl.isEmpty) {
-        return (fullDataUrl: fullDataUrl, selectedDataUrl: fullDataUrl);
-      }
-
-      return (fullDataUrl: fullDataUrl, selectedDataUrl: selectedDataUrl);
+      if (fullDataUrl.isEmpty) return null;
+      return (fullDataUrl: fullDataUrl, logicalSize: logicalSize, pixelRatio: ratio);
     } catch (_) {
       return null;
     }
+  }
+
+  /// Maps a global widget rect into boundary-local logical coordinates.
+  Rect globalRectToBoundaryLocal({
+    required GlobalKey boundaryKey,
+    required Rect globalRect,
+    double padding = defaultSelectionPadding,
+  }) {
+    final boundary = boundaryKey.currentContext?.findRenderObject();
+    if (boundary is! RenderRepaintBoundary) return globalRect;
+
+    final boundaryOffset = boundary.localToGlobal(Offset.zero);
+    final padded = globalRect.inflate(padding);
+    return Rect.fromLTWH(
+      padded.left - boundaryOffset.dx,
+      padded.top - boundaryOffset.dy,
+      padded.width,
+      padded.height,
+    );
+  }
+
+  /// Maps a boundary-local rect back to global screen coordinates.
+  Rect boundaryLocalToGlobal({
+    required GlobalKey boundaryKey,
+    required Rect localRect,
+  }) {
+    final boundary = boundaryKey.currentContext?.findRenderObject();
+    if (boundary is! RenderRepaintBoundary) return localRect;
+
+    final boundaryOffset = boundary.localToGlobal(Offset.zero);
+    return Rect.fromLTWH(
+      localRect.left + boundaryOffset.dx,
+      localRect.top + boundaryOffset.dy,
+      localRect.width,
+      localRect.height,
+    );
+  }
+
+  /// Exports cropped region with optional highlight strokes burned in.
+  Future<String> exportSelectedRegion({
+    required String fullDataUrl,
+    required Rect cropRectLogical,
+    required Size imageLogicalSize,
+    required double pixelRatio,
+    List<VibeBugHighlightStroke> strokes = const [],
+  }) async {
+    final image = await decodeDataUrl(fullDataUrl);
+    if (image == null) return fullDataUrl;
+
+    try {
+      final clamped = clampRect(cropRectLogical, imageLogicalSize);
+      if (clamped.width < 4 || clamped.height < 4) {
+        return fullDataUrl;
+      }
+
+      final cropped = await _cropImage(image, clamped, pixelRatio);
+      final withHighlights = strokes.isEmpty
+          ? cropped
+          : await _drawHighlightsOnImage(cropped, strokes, clamped, pixelRatio);
+
+      final dataUrl = await _encodePngDataUrl(withHighlights);
+      if (cropped != withHighlights) cropped.dispose();
+      withHighlights.dispose();
+      return dataUrl.isEmpty ? fullDataUrl : dataUrl;
+    } finally {
+      image.dispose();
+    }
+  }
+
+  Future<({String fullDataUrl, String selectedDataUrl})?> capturePair({
+    required GlobalKey boundaryKey,
+    required Rect globalRect,
+    double pixelRatio = 1,
+    double selectionPadding = defaultSelectionPadding,
+  }) async {
+    final full = await captureFull(boundaryKey: boundaryKey, pixelRatio: pixelRatio);
+    if (full == null) return null;
+
+    final localRect = globalRectToBoundaryLocal(
+      boundaryKey: boundaryKey,
+      globalRect: globalRect,
+      padding: selectionPadding,
+    );
+
+    final selectedDataUrl = await exportSelectedRegion(
+      fullDataUrl: full.fullDataUrl,
+      cropRectLogical: localRect,
+      imageLogicalSize: full.logicalSize,
+      pixelRatio: full.pixelRatio,
+    );
+
+    return (fullDataUrl: full.fullDataUrl, selectedDataUrl: selectedDataUrl);
+  }
+
+  static Future<ui.Image?> decodeDataUrl(String dataUrl) async {
+    try {
+      final encoded = dataUrl.contains(',') ? dataUrl.split(',').last : dataUrl;
+      final bytes = base64Decode(encoded);
+      final codec = await ui.instantiateImageCodec(bytes);
+      final frame = await codec.getNextFrame();
+      return frame.image;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  static Rect clampRect(Rect rect, Size bounds) {
+    final left = rect.left.clamp(0.0, bounds.width);
+    final top = rect.top.clamp(0.0, bounds.height);
+    final right = rect.right.clamp(0.0, bounds.width);
+    final bottom = rect.bottom.clamp(0.0, bounds.height);
+    return Rect.fromLTRB(left, top, right, bottom);
   }
 
   Future<void> _waitForNextFrame() {
     final completer = Completer<void>();
     SchedulerBinding.instance.addPostFrameCallback((_) => completer.complete());
     return completer.future;
-  }
-
-  Rect _clampRect(Rect rect, Size bounds) {
-    final left = rect.left.clamp(0.0, bounds.width);
-    final top = rect.top.clamp(0.0, bounds.height);
-    final right = rect.right.clamp(0.0, bounds.width);
-    final bottom = rect.bottom.clamp(0.0, bounds.height);
-    return Rect.fromLTRB(left, top, right, bottom);
   }
 
   Future<ui.Image> _cropImage(ui.Image source, Rect sourceRect, double pixelRatio) async {
@@ -99,6 +183,48 @@ class VibeBugScreenshotCapture {
     final image = await picture.toImage(width, height);
     picture.dispose();
     return image;
+  }
+
+  Future<ui.Image> _drawHighlightsOnImage(
+    ui.Image cropped,
+    List<VibeBugHighlightStroke> strokes,
+    Rect cropRectLogical,
+    double pixelRatio,
+  ) async {
+    final recorder = ui.PictureRecorder();
+    final canvas = ui.Canvas(recorder);
+    final paint = ui.Paint()
+      ..color = const ui.Color(0xCCBEF264)
+      ..strokeWidth = 4 * pixelRatio
+      ..style = ui.PaintingStyle.stroke
+      ..strokeCap = ui.StrokeCap.round
+      ..strokeJoin = ui.StrokeJoin.round;
+
+    canvas.drawImage(cropped, Offset.zero, ui.Paint());
+
+    for (final stroke in strokes) {
+      if (stroke.points.length < 2) continue;
+      final path = ui.Path();
+      final first = _toCropPixel(stroke.points.first, cropRectLogical, pixelRatio);
+      path.moveTo(first.dx, first.dy);
+      for (var i = 1; i < stroke.points.length; i++) {
+        final p = _toCropPixel(stroke.points[i], cropRectLogical, pixelRatio);
+        path.lineTo(p.dx, p.dy);
+      }
+      canvas.drawPath(path, paint);
+    }
+
+    final picture = recorder.endRecording();
+    final image = await picture.toImage(cropped.width, cropped.height);
+    picture.dispose();
+    return image;
+  }
+
+  Offset _toCropPixel(Offset logicalPoint, Rect cropRectLogical, double pixelRatio) {
+    return Offset(
+      (logicalPoint.dx - cropRectLogical.left) * pixelRatio,
+      (logicalPoint.dy - cropRectLogical.top) * pixelRatio,
+    );
   }
 
   Future<String> _encodePngDataUrl(ui.Image image) async {

@@ -1,3 +1,5 @@
+import 'dart:ui';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:vibebug_flutter/vibebug_flutter.dart';
 
@@ -56,4 +58,34 @@ void main() {
     expect(json['fullScreenshotDataUrl'], 'data:image/png;base64,full');
     expect(json['cssSelector'], 'flutter:Icon>Row');
   });
+
+  test('clampRect keeps crop inside image bounds', () {
+    final clamped = VibeBugScreenshotCapture.clampRect(
+      const Rect.fromLTWH(-10, -10, 200, 200),
+      const Size(100, 80),
+    );
+    expect(capturedWithin(clamped, const Size(100, 80)), isTrue);
+    expect(clamped.width, greaterThan(0));
+    expect(clamped.height, greaterThan(0));
+  });
+
+  test('exportSelectedRegion returns full when crop too small', () async {
+    const capture = VibeBugScreenshotCapture();
+    const full = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+    final selected = await capture.exportSelectedRegion(
+      fullDataUrl: full,
+      cropRectLogical: const Rect.fromLTWH(0, 0, 1, 1),
+      imageLogicalSize: const Size(1, 1),
+      pixelRatio: 1,
+    );
+    expect(selected, isNotEmpty);
+    expect(selected.startsWith('data:image/png;base64,'), isTrue);
+  });
+}
+
+bool capturedWithin(Rect rect, Size bounds) {
+  return rect.left >= 0 &&
+      rect.top >= 0 &&
+      rect.right <= bounds.width &&
+      rect.bottom <= bounds.height;
 }

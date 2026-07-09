@@ -7,6 +7,7 @@ import 'package:uuid/uuid.dart';
 
 import '../vibebug.dart';
 import 'capture_models.dart';
+import 'capture_region_editor.dart';
 import 'screenshot_capture.dart';
 import 'widget_inspector.dart';
 
@@ -27,7 +28,6 @@ class VibeBugCaptureOverlay extends StatefulWidget {
   final Widget child;
   final GlobalKey boundaryKey;
   final bool enabled;
-  /// Pass [GoRouter]'s `routerDelegate.navigatorKey` when using `MaterialApp.router` builder.
   final GlobalKey<NavigatorState>? navigatorKey;
 
   @override
@@ -46,7 +46,7 @@ class _VibeBugCaptureOverlayState extends State<VibeBugCaptureOverlay> {
   final List<VibeBugScreenshotShot> _draftShots = [];
   bool _submitting = false;
   OverlayEntry? _pickerOverlay;
-  final _pickerOverlayKey = GlobalKey();
+  RenderObject? _pickerExcludeRoot;
 
   @override
   void initState() {
@@ -54,17 +54,17 @@ class _VibeBugCaptureOverlayState extends State<VibeBugCaptureOverlay> {
     unawaited(_loadBubbleOffset());
   }
 
-  BuildContext? get _sheetContext =>
+  BuildContext? get _navContext =>
       widget.navigatorKey?.currentContext ?? context;
 
   OverlayState? get _navigatorOverlay {
     final fromKey = widget.navigatorKey?.currentState?.overlay;
     if (fromKey != null) return fromKey;
 
-    final sheet = _sheetContext;
-    if (sheet != null) {
-      final fromSheet = Overlay.maybeOf(sheet, rootOverlay: true);
-      if (fromSheet != null) return fromSheet;
+    final nav = _navContext;
+    if (nav != null) {
+      final fromNav = Overlay.maybeOf(nav, rootOverlay: true);
+      if (fromNav != null) return fromNav;
     }
 
     return Overlay.maybeOf(context, rootOverlay: true);
@@ -79,6 +79,7 @@ class _VibeBugCaptureOverlayState extends State<VibeBugCaptureOverlay> {
   void _removePickerOverlay() {
     _pickerOverlay?.remove();
     _pickerOverlay = null;
+    _pickerExcludeRoot = null;
   }
 
   Future<void> _loadBubbleOffset() async {
@@ -120,7 +121,14 @@ class _VibeBugCaptureOverlayState extends State<VibeBugCaptureOverlay> {
       _hoverHit = null;
     });
 
-    _pickerOverlay = OverlayEntry(builder: _buildPickerOverlay);
+    _pickerOverlay = OverlayEntry(
+      builder: (overlayContext) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          _pickerExcludeRoot = overlayContext.findRenderObject();
+        });
+        return _buildPickerOverlay(overlayContext);
+      },
+    );
     overlay.insert(_pickerOverlay!);
   }
 
@@ -133,13 +141,10 @@ class _VibeBugCaptureOverlayState extends State<VibeBugCaptureOverlay> {
     });
   }
 
-  RenderObject? get _pickerExcludeRoot =>
-      _pickerOverlayKey.currentContext?.findRenderObject();
-
   void _updateHover(Offset globalPosition) {
     final hit = _inspector.hitTestAt(
       globalPosition,
-      routeContext: _sheetContext,
+      routeContext: _navContext,
       boundaryKey: widget.boundaryKey,
       excludeSubtreeRoot: _pickerExcludeRoot,
     );
@@ -157,7 +162,7 @@ class _VibeBugCaptureOverlayState extends State<VibeBugCaptureOverlay> {
     final hit = _hoverHit ??
         _inspector.hitTestAt(
           globalPosition,
-          routeContext: _sheetContext,
+          routeContext: _navContext,
           boundaryKey: widget.boundaryKey,
           excludeSubtreeRoot: _pickerExcludeRoot,
         );
@@ -172,49 +177,66 @@ class _VibeBugCaptureOverlayState extends State<VibeBugCaptureOverlay> {
       return;
     }
 
-    setState(() => _capturing = true);
-    final sheetContext = _sheetContext;
-    final ratio = sheetContext != null
-        ? MediaQuery.devicePixelRatioOf(sheetContext)
-        : MediaQuery.devicePixelRatioOf(context);
+    final navContext = _navContext;
+    if (navContext == null) return;
 
-    final pair = await _screenshots.capturePair(
+    setState(() => _capturing = true);
+    final ratio = MediaQuery.devicePixelRatioOf(navContext);
+
+    final full = await _screenshots.captureFull(
       boundaryKey: widget.boundaryKey,
-      globalRect: hit.globalRect,
       pixelRatio: ratio,
     );
     if (!mounted) return;
     setState(() => _capturing = false);
 
-    if (pair == null || pair.fullDataUrl.isEmpty) {
+    if (full == null || full.fullDataUrl.isEmpty) {
       _showSnack('Screenshot capture failed. Try again after the screen settles.');
       return;
     }
 
-    final note = await _promptCaptureNote(hit, pair.selectedDataUrl);
-    if (!mounted) return;
-    if (note == null) return;
+    final initialCrop = _screenshots.globalRectToBoundaryLocal(
+      boundaryKey: widget.boundaryKey,
+      globalRect: hit.globalRect,
+    );
+
+    final editorNav = _navContext;
+    if (editorNav == null || !editorNav.mounted) return;
+
+    final editorResult = await CaptureRegionEditor.open(
+      context: editorNav,
+      fullDataUrl: full.fullDataUrl,
+      imageLogicalSize: full.logicalSize,
+      initialCropRect: initialCrop,
+      pixelRatio: full.pixelRatio,
+      hit: hit,
+      captureIndex: _draftShots.length + 1,
+    );
+
+    if (!mounted || editorResult == null) return;
+
+    final globalCropRect = _screenshots.boundaryLocalToGlobal(
+      boundaryKey: widget.boundaryKey,
+      localRect: editorResult.elementRect,
+    );
 
     setState(() {
       _draftShots.add(
         VibeBugScreenshotShot(
           id: _uuid.v4(),
-          description: note,
-          selectedScreenshotDataUrl: pair.selectedDataUrl,
-          fullScreenshotDataUrl: pair.fullDataUrl,
+          description: editorResult.description,
+          selectedScreenshotDataUrl: editorResult.selectedScreenshotDataUrl,
+          fullScreenshotDataUrl: editorResult.fullScreenshotDataUrl,
           pageUrl: hit.routeName.isNotEmpty ? 'flutter://${hit.routeName}' : 'flutter://screen',
           cssSelector: hit.selector,
           domText: hit.semanticsLabel,
           htmlSnippet: hit.widgetSnippet,
           elementTag: hit.widgetType,
+          elementClasses: hit.ancestorTrail.join(' '),
           elementId: hit.widgetKey ?? '',
-          viewportWidth: sheetContext != null
-              ? MediaQuery.sizeOf(sheetContext).width.round()
-              : 0,
-          viewportHeight: sheetContext != null
-              ? MediaQuery.sizeOf(sheetContext).height.round()
-              : 0,
-          elementRect: hit.globalRect,
+          viewportWidth: MediaQuery.sizeOf(navContext).width.round(),
+          viewportHeight: MediaQuery.sizeOf(navContext).height.round(),
+          elementRect: globalCropRect,
         ),
       );
     });
@@ -227,13 +249,13 @@ class _VibeBugCaptureOverlayState extends State<VibeBugCaptureOverlay> {
   }
 
   void _showCaptureSavedSnack() {
-    final navContext = _sheetContext;
+    final navContext = _navContext;
     if (navContext == null || !navContext.mounted) return;
     ScaffoldMessenger.of(navContext).hideCurrentSnackBar();
     ScaffoldMessenger.of(navContext).showSnackBar(
       SnackBar(
         content: Text(
-          '${_draftShots.length}/$_maxCaptures captured. Navigate to another screen, then tap Report to add more.',
+          '${_draftShots.length}/$_maxCaptures captured. Navigate freely, tap Report to add more.',
         ),
         duration: const Duration(seconds: 5),
         action: SnackBarAction(
@@ -244,155 +266,44 @@ class _VibeBugCaptureOverlayState extends State<VibeBugCaptureOverlay> {
     );
   }
 
-  Future<String?> _promptCaptureNote(FlutterWidgetHit hit, String previewDataUrl) async {
-    final navContext = _sheetContext;
-    if (navContext == null) return null;
-
-    final controller = TextEditingController(
-      text: hit.semanticsLabel.isNotEmpty ? hit.semanticsLabel : '',
-    );
-    return showModalBottomSheet<String>(
-      context: navContext,
-      isScrollControlled: true,
-      useSafeArea: true,
-      builder: (ctx) {
-        return Padding(
-          padding: EdgeInsets.only(
-            left: 16,
-            right: 16,
-            top: 16,
-            bottom: 16 + MediaQuery.viewInsetsOf(ctx).bottom,
-          ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Text('Capture ${_draftShots.length + 1}', style: Theme.of(ctx).textTheme.titleMedium),
-              const SizedBox(height: 8),
-              Text('Widget: ${hit.widgetType}', style: Theme.of(ctx).textTheme.bodySmall),
-              const SizedBox(height: 8),
-              ClipRRect(
-                borderRadius: BorderRadius.circular(8),
-                child: _CaptureThumbnail(dataUrl: previewDataUrl, width: double.infinity, height: 140),
-              ),
-              const SizedBox(height: 8),
-              TextField(
-                controller: controller,
-                maxLines: 3,
-                decoration: const InputDecoration(
-                  labelText: 'What is wrong with this widget?',
-                  border: OutlineInputBorder(),
-                ),
-              ),
-              const SizedBox(height: 12),
-              FilledButton(
-                onPressed: () {
-                  final text = controller.text.trim();
-                  Navigator.pop(ctx, text.isEmpty ? hit.semanticsLabel : text);
-                },
-                child: const Text('Save capture'),
-              ),
-            ],
-          ),
-        );
-      },
-    );
-  }
-
   Future<void> _openSubmitSheet() async {
     if (_draftShots.isEmpty) return;
-    final navContext = _sheetContext;
+    final navContext = _navContext;
     if (navContext == null) return;
 
-    final summaryController = TextEditingController(
-      text: _draftShots.first.description,
-    );
-    final sent = await showModalBottomSheet<bool>(
+    final result = await showModalBottomSheet<_SubmitSheetResult>(
       context: navContext,
       isScrollControlled: true,
       useSafeArea: true,
-      builder: (ctx) {
-        return StatefulBuilder(
-          builder: (context, setLocalState) {
-            return Padding(
-              padding: EdgeInsets.only(
-                left: 16,
-                right: 16,
-                top: 16,
-                bottom: 16 + MediaQuery.viewInsetsOf(ctx).bottom,
-              ),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  Text('Send issue (${_draftShots.length} captures)', style: Theme.of(ctx).textTheme.titleLarge),
-                  const SizedBox(height: 12),
-                  SizedBox(
-                    height: 88,
-                    child: ListView.separated(
-                      scrollDirection: Axis.horizontal,
-                      itemCount: _draftShots.length,
-                      separatorBuilder: (_, __) => const SizedBox(width: 8),
-                      itemBuilder: (_, index) {
-                        final shot = _draftShots[index];
-                        return Stack(
-                          children: [
-                            ClipRRect(
-                              borderRadius: BorderRadius.circular(8),
-                              child: _CaptureThumbnail(dataUrl: shot.selectedScreenshotDataUrl),
-                            ),
-                            Positioned(
-                              top: 0,
-                              right: 0,
-                              child: IconButton(
-                                visualDensity: VisualDensity.compact,
-                                icon: const Icon(Icons.close, size: 16),
-                                onPressed: () {
-                                  setState(() => _draftShots.removeAt(index));
-                                  setLocalState(() {});
-                                },
-                              ),
-                            ),
-                          ],
-                        );
-                      },
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  TextField(
-                    controller: summaryController,
-                    maxLines: 3,
-                    decoration: const InputDecoration(
-                      labelText: 'Issue summary',
-                      border: OutlineInputBorder(),
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  FilledButton(
-                    onPressed: _submitting ? null : () => Navigator.pop(ctx, true),
-                    child: Text(_submitting ? 'Sending…' : 'Send to developer'),
-                  ),
-                ],
-              ),
-            );
-          },
-        );
-      },
+      builder: (ctx) => _SubmitIssueSheet(
+        shots: List<VibeBugScreenshotShot>.from(_draftShots),
+        submitting: _submitting,
+      ),
     );
 
-    if (sent == true && summaryController.text.trim().length >= 3) {
-      await _submitIssue(summaryController.text.trim());
+    if (!mounted || result == null) return;
+
+    if (result.shots.isEmpty) {
+      setState(() => _draftShots.clear());
+      return;
     }
-    summaryController.dispose();
+
+    setState(() => _draftShots
+      ..clear()
+      ..addAll(result.shots));
+
+    if (result.send && result.summary.trim().length >= 3) {
+      await _submitIssue(result.summary.trim(), result.shots);
+    }
   }
 
-  Future<void> _submitIssue(String summary) async {
-    if (_draftShots.isEmpty) return;
+  Future<void> _submitIssue(String summary, List<VibeBugScreenshotShot> shots) async {
+    if (shots.isEmpty) return;
     setState(() => _submitting = true);
     try {
       final issueId = await VibeBug.reportIssueWithCaptures(
         summary: summary,
-        captures: List<VibeBugScreenshotShot>.from(_draftShots),
+        captures: shots,
       );
       if (!mounted) return;
       setState(() {
@@ -407,7 +318,7 @@ class _VibeBugCaptureOverlayState extends State<VibeBugCaptureOverlay> {
   }
 
   void _showSnack(String message) {
-    final navContext = _sheetContext;
+    final navContext = _navContext;
     if (navContext == null || !navContext.mounted) return;
     ScaffoldMessenger.of(navContext).showSnackBar(SnackBar(content: Text(message)));
   }
@@ -428,7 +339,6 @@ class _VibeBugCaptureOverlayState extends State<VibeBugCaptureOverlay> {
     final topPadding = MediaQuery.paddingOf(overlayContext).top;
 
     return Positioned.fill(
-      key: _pickerOverlayKey,
       child: Material(
         type: MaterialType.transparency,
         child: Stack(
@@ -475,8 +385,12 @@ class _VibeBugCaptureOverlayState extends State<VibeBugCaptureOverlay> {
                   padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
                   child: Row(
                     children: [
-                      const Expanded(
-                        child: Text('Tap the widget that looks wrong'),
+                      Expanded(
+                        child: Text(
+                          _draftShots.isEmpty
+                              ? 'Tap the widget that looks wrong'
+                              : 'Tap widget (${_draftShots.length}/$_maxCaptures captured)',
+                        ),
                       ),
                       TextButton(onPressed: _stopPicking, child: const Text('Cancel')),
                     ],
@@ -498,29 +412,318 @@ class _VibeBugCaptureOverlayState extends State<VibeBugCaptureOverlay> {
         fit: StackFit.expand,
         children: [
           widget.child,
-        if (_capturing)
-          const Positioned.fill(
-            child: ColoredBox(
-              color: Color(0x66000000),
-              child: Center(child: CircularProgressIndicator()),
+          if (_capturing)
+            const Positioned.fill(
+              child: ColoredBox(
+                color: Color(0x66000000),
+                child: Center(child: CircularProgressIndicator()),
+              ),
             ),
-          ),
-        if (widget.enabled && !_picking && !_capturing)
-          _DraggableReportBubble(
-            offset: _bubbleOffset,
-            draftCount: _draftShots.length,
-            onOffsetChanged: _onBubbleMoved,
-            onDragEnd: _onBubbleDragEnded,
-            onTap: _startPicking,
-            onReview: () => unawaited(_openSubmitSheet()),
-            onLongPress: () {
-              if (_draftShots.isNotEmpty) {
-                setState(() => _draftShots.clear());
-                _showSnack('Draft captures cleared.');
-              }
-            },
-          ),
+          if (widget.enabled && !_picking && !_capturing)
+            _DraggableReportBubble(
+              offset: _bubbleOffset,
+              draftCount: _draftShots.length,
+              onOffsetChanged: _onBubbleMoved,
+              onDragEnd: _onBubbleDragEnded,
+              onTap: _startPicking,
+              onReview: () => unawaited(_openSubmitSheet()),
+              onLongPress: () {
+                if (_draftShots.isNotEmpty) {
+                  setState(() => _draftShots.clear());
+                  _showSnack('Draft captures cleared.');
+                }
+              },
+            ),
         ],
+      ),
+    );
+  }
+}
+
+class _SubmitSheetResult {
+  const _SubmitSheetResult({
+    required this.shots,
+    required this.summary,
+    required this.send,
+  });
+
+  final List<VibeBugScreenshotShot> shots;
+  final String summary;
+  final bool send;
+}
+
+class _SubmitIssueSheet extends StatefulWidget {
+  const _SubmitIssueSheet({
+    required this.shots,
+    required this.submitting,
+  });
+
+  final List<VibeBugScreenshotShot> shots;
+  final bool submitting;
+
+  @override
+  State<_SubmitIssueSheet> createState() => _SubmitIssueSheetState();
+}
+
+class _SubmitIssueSheetState extends State<_SubmitIssueSheet> {
+  late List<VibeBugScreenshotShot> _shots;
+  late final TextEditingController _summaryController;
+  final Map<String, TextEditingController> _descControllers = {};
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _shots = List.from(widget.shots);
+    _summaryController = TextEditingController(
+      text: _shots.isNotEmpty ? _shots.first.description : '',
+    );
+    for (final shot in _shots) {
+      _descControllers[shot.id] = TextEditingController(text: shot.description);
+    }
+  }
+
+  @override
+  void dispose() {
+    _summaryController.dispose();
+    for (final c in _descControllers.values) {
+      c.dispose();
+    }
+    super.dispose();
+  }
+
+  void _removeShot(String id) {
+    final controller = _descControllers.remove(id);
+    controller?.dispose();
+    setState(() {
+      _shots.removeWhere((s) => s.id == id);
+      if (_shots.isEmpty) {
+        Navigator.of(context).pop(const _SubmitSheetResult(shots: [], summary: '', send: false));
+      }
+    });
+  }
+
+  void _updateShotDescription(String id, String text) {
+    final index = _shots.indexWhere((s) => s.id == id);
+    if (index < 0) return;
+    _shots[index] = VibeBugScreenshotShot(
+      id: _shots[index].id,
+      description: text,
+      selectedScreenshotDataUrl: _shots[index].selectedScreenshotDataUrl,
+      fullScreenshotDataUrl: _shots[index].fullScreenshotDataUrl,
+      pageUrl: _shots[index].pageUrl,
+      cssSelector: _shots[index].cssSelector,
+      domText: _shots[index].domText,
+      htmlSnippet: _shots[index].htmlSnippet,
+      elementTag: _shots[index].elementTag,
+      elementClasses: _shots[index].elementClasses,
+      elementId: _shots[index].elementId,
+      viewportWidth: _shots[index].viewportWidth,
+      viewportHeight: _shots[index].viewportHeight,
+      elementRect: _shots[index].elementRect,
+      attachments: _shots[index].attachments,
+    );
+  }
+
+  List<VibeBugScreenshotShot> _collectShots() {
+    return _shots.map((shot) {
+      final desc = _descControllers[shot.id]?.text.trim() ?? shot.description;
+      return VibeBugScreenshotShot(
+        id: shot.id,
+        description: desc,
+        selectedScreenshotDataUrl: shot.selectedScreenshotDataUrl,
+        fullScreenshotDataUrl: shot.fullScreenshotDataUrl,
+        pageUrl: shot.pageUrl,
+        cssSelector: shot.cssSelector,
+        domText: shot.domText,
+        htmlSnippet: shot.htmlSnippet,
+        elementTag: shot.elementTag,
+        elementClasses: shot.elementClasses,
+        elementId: shot.elementId,
+        viewportWidth: shot.viewportWidth,
+        viewportHeight: shot.viewportHeight,
+        elementRect: shot.elementRect,
+        attachments: shot.attachments,
+      );
+    }).toList();
+  }
+
+  void _trySend() {
+    final summary = _summaryController.text.trim();
+    final collected = _collectShots();
+
+    if (summary.length < 3) {
+      setState(() => _error = 'Issue summary must be at least 3 characters.');
+      return;
+    }
+    for (var i = 0; i < collected.length; i++) {
+      if (collected[i].description.trim().isEmpty) {
+        setState(() => _error = 'Add a description for screenshot ${i + 1}.');
+        return;
+      }
+    }
+
+    Navigator.of(context).pop(
+      _SubmitSheetResult(shots: collected, summary: summary, send: true),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return DraggableScrollableSheet(
+      expand: false,
+      initialChildSize: 0.85,
+      minChildSize: 0.4,
+      maxChildSize: 0.95,
+      builder: (ctx, scrollController) {
+        return Padding(
+          padding: EdgeInsets.only(
+            left: 16,
+            right: 16,
+            top: 16,
+            bottom: 16 + MediaQuery.viewInsetsOf(ctx).bottom,
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text('Send issue (${_shots.length} captures)', style: Theme.of(ctx).textTheme.titleLarge),
+              if (_error != null) ...[
+                const SizedBox(height: 8),
+                Text(_error!, style: TextStyle(color: Theme.of(ctx).colorScheme.error, fontSize: 13)),
+              ],
+              const SizedBox(height: 12),
+              Expanded(
+                child: ListView.separated(
+                  controller: scrollController,
+                  itemCount: _shots.length,
+                  separatorBuilder: (_, __) => const SizedBox(height: 12),
+                  itemBuilder: (_, index) {
+                    final shot = _shots[index];
+                    return _DraftShotCard(
+                      index: index,
+                      shot: shot,
+                      descController: _descControllers[shot.id]!,
+                      onDescriptionChanged: (text) => _updateShotDescription(shot.id, text),
+                      onRemove: () => _removeShot(shot.id),
+                    );
+                  },
+                ),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: _summaryController,
+                maxLines: 3,
+                decoration: const InputDecoration(
+                  labelText: 'Issue summary',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+              const SizedBox(height: 12),
+              FilledButton(
+                onPressed: widget.submitting ? null : _trySend,
+                child: Text(widget.submitting ? 'Sending…' : 'Send to developer'),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _DraftShotCard extends StatelessWidget {
+  const _DraftShotCard({
+    required this.index,
+    required this.shot,
+    required this.descController,
+    required this.onDescriptionChanged,
+    required this.onRemove,
+  });
+
+  final int index;
+  final VibeBugScreenshotShot shot;
+  final TextEditingController descController;
+  final ValueChanged<String> onDescriptionChanged;
+  final VoidCallback onRemove;
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(
+              children: [
+                Text('Screenshot ${index + 1}', style: Theme.of(context).textTheme.titleSmall),
+                const Spacer(),
+                IconButton(
+                  visualDensity: VisualDensity.compact,
+                  icon: const Icon(Icons.delete_outline, size: 20),
+                  onPressed: onRemove,
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text('Selected', style: Theme.of(context).textTheme.labelSmall),
+                      const SizedBox(height: 4),
+                      ClipRRect(
+                        borderRadius: BorderRadius.circular(8),
+                        child: _CaptureThumbnail(dataUrl: shot.selectedScreenshotDataUrl, height: 72),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text('Full context', style: Theme.of(context).textTheme.labelSmall),
+                      const SizedBox(height: 4),
+                      ClipRRect(
+                        borderRadius: BorderRadius.circular(8),
+                        child: _CaptureThumbnail(dataUrl: shot.fullScreenshotDataUrl, height: 72),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Text(
+              shot.pageUrl,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+            const SizedBox(height: 4),
+            Text(
+              shot.cssSelector,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(fontFamily: 'monospace'),
+            ),
+            const SizedBox(height: 8),
+            TextField(
+              controller: descController,
+              maxLines: 2,
+              onChanged: onDescriptionChanged,
+              decoration: const InputDecoration(
+                labelText: 'Description for this screenshot',
+                border: OutlineInputBorder(),
+                isDense: true,
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -678,29 +881,42 @@ class _DraggableReportBubbleState extends State<_DraggableReportBubble> {
 class _CaptureThumbnail extends StatelessWidget {
   const _CaptureThumbnail({
     required this.dataUrl,
-    this.width = 72,
     this.height = 72,
   });
 
   final String dataUrl;
-  final double width;
   final double height;
 
   @override
   Widget build(BuildContext context) {
+    if (dataUrl.isEmpty) {
+      return _placeholder(height);
+    }
     try {
       final encoded = dataUrl.contains(',') ? dataUrl.split(',').last : dataUrl;
       final bytes = base64Decode(encoded);
-      return Image.memory(bytes, width: width, height: height, fit: BoxFit.cover);
-    } catch (_) {
-      return Container(
-        width: width,
+      if (bytes.isEmpty) return _placeholder(height);
+      return Image.memory(
+        bytes,
+        width: double.infinity,
         height: height,
-        color: Colors.black12,
-        alignment: Alignment.center,
-        child: const Icon(Icons.image_not_supported_outlined, size: 18),
+        fit: BoxFit.cover,
+        gaplessPlayback: true,
+        errorBuilder: (_, __, ___) => _placeholder(height),
       );
+    } catch (_) {
+      return _placeholder(height);
     }
+  }
+
+  Widget _placeholder(double h) {
+    return Container(
+      width: double.infinity,
+      height: h,
+      color: Colors.black12,
+      alignment: Alignment.center,
+      child: const Icon(Icons.image_not_supported_outlined, size: 18),
+    );
   }
 }
 
@@ -715,7 +931,6 @@ class VibeBugScope extends StatefulWidget {
 
   final Widget child;
   final bool showReportButton;
-  /// Required for modals when [VibeBugScope] is used inside `MaterialApp.router` builder.
   final GlobalKey<NavigatorState>? navigatorKey;
 
   @override

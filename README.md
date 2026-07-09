@@ -6,7 +6,7 @@ Flutter SDK for [Vibe Bug Tracker](https://vibebugtracker.com) — crash reporti
 
 - Automatic crash and uncaught exception reporting
 - **Draggable Report button** — testers can move the bubble anywhere on screen
-- **Widget selection** — tap a widget to capture it (selected crop + full screen context)
+- **Capture region editor** — after selecting a widget, crop/adjust the region and draw highlight marks before saving
 - **Multi-screenshot issues** — up to 8 captures per issue, like the Chrome extension
 - **Flutter-specific AI markdown** — issue descriptions include widget selectors, route, and Flutter fix guidance
 - Offline queue with retry when connectivity returns
@@ -57,10 +57,10 @@ VibeBugScope(
 ```
 
 1. **Drag** the bubble to reposition it (position is remembered)
-2. **Tap** the bubble → hover highlights widgets → **tap a widget** to capture it
-3. Add a note for that capture
-4. **Add another** widget capture (up to 8) or **Review & send**
-5. Submit the issue — developers receive Flutter markdown + all screenshots
+2. **Tap** the bubble → tap a widget to capture it
+3. **Crop / highlight** in the full-screen editor, add a per-capture note, then **Save**
+4. Navigate to other screens freely, tap **Report** again to add more (up to 8)
+5. Tap the **badge** on the bubble → review selected + full screenshots per capture → **Send**
 
 Long-press the bubble to clear draft captures.
 
