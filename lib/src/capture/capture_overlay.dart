@@ -12,6 +12,7 @@ import 'widget_inspector.dart';
 
 const _maxCaptures = 8;
 const _bubblePositionKey = 'vibebug_bubble_offset';
+const _bubbleDragSlop = 10.0;
 
 /// Draggable report button + widget picker + multi-screenshot issue composer.
 class VibeBugCaptureOverlay extends StatefulWidget {
@@ -40,6 +41,7 @@ class _VibeBugCaptureOverlayState extends State<VibeBugCaptureOverlay> {
 
   Offset _bubbleOffset = const Offset(20, 120);
   bool _picking = false;
+  bool _pickingReady = false;
   bool _capturing = false;
   FlutterWidgetHit? _hoverHit;
   final List<VibeBugScreenshotShot> _draftShots = [];
@@ -80,10 +82,15 @@ class _VibeBugCaptureOverlayState extends State<VibeBugCaptureOverlay> {
   }
 
   void _startPicking() {
-    if (!widget.enabled || !VibeBug.isInitialized || _capturing) return;
+    if (!widget.enabled || !VibeBug.isInitialized || _capturing || _picking) return;
     setState(() {
       _picking = true;
+      _pickingReady = false;
       _hoverHit = null;
+    });
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !_picking) return;
+      setState(() => _pickingReady = true);
     });
   }
 
@@ -91,6 +98,7 @@ class _VibeBugCaptureOverlayState extends State<VibeBugCaptureOverlay> {
     if (!mounted) return;
     setState(() {
       _picking = false;
+      _pickingReady = false;
       _hoverHit = null;
     });
   }
@@ -395,14 +403,17 @@ class _VibeBugCaptureOverlayState extends State<VibeBugCaptureOverlay> {
                         child: Listener(
                           behavior: HitTestBehavior.translucent,
                           onPointerDown: (event) {
+                            if (!_pickingReady) return;
                             final global = overlayBox?.localToGlobal(event.position) ?? event.position;
                             _updateHover(global);
                           },
                           onPointerMove: (event) {
+                            if (!_pickingReady) return;
                             final global = overlayBox?.localToGlobal(event.position) ?? event.position;
                             _updateHover(global);
                           },
                           onPointerUp: (event) {
+                            if (!_pickingReady) return;
                             final global = overlayBox?.localToGlobal(event.position) ?? event.position;
                             unawaited(_captureAt(global));
                           },
@@ -507,8 +518,10 @@ class _DraggableReportBubble extends StatefulWidget {
 }
 
 class _DraggableReportBubbleState extends State<_DraggableReportBubble> {
+  Offset? _dragOrigin;
+  Offset _panTotal = Offset.zero;
   Offset? _lastDragOffset;
-  bool _moved = false;
+  bool _dragging = false;
 
   @override
   Widget build(BuildContext context) {
@@ -523,28 +536,43 @@ class _DraggableReportBubbleState extends State<_DraggableReportBubble> {
       left: dx,
       top: dy,
       child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onLongPress: widget.onLongPress,
         onPanStart: (_) {
+          _dragOrigin = widget.offset;
+          _panTotal = Offset.zero;
           _lastDragOffset = widget.offset;
-          _moved = false;
+          _dragging = false;
         },
         onPanUpdate: (details) {
-          _moved = true;
+          if (_dragOrigin == null) return;
+          _panTotal += details.delta;
+          if (!_dragging && _panTotal.distance < _bubbleDragSlop) return;
+          _dragging = true;
           final next = Offset(
-            (widget.offset.dx + details.delta.dx).clamp(8.0, maxX),
-            (widget.offset.dy + details.delta.dy).clamp(padding.top + 8, maxY),
+            (_dragOrigin!.dx + _panTotal.dx).clamp(8.0, maxX),
+            (_dragOrigin!.dy + _panTotal.dy).clamp(padding.top + 8, maxY),
           );
           _lastDragOffset = next;
           widget.onOffsetChanged(next);
         },
         onPanEnd: (_) {
-          if (!_moved) {
+          if (!_dragging) {
             widget.onTap();
           } else if (_lastDragOffset != null) {
             widget.onDragEnd(_lastDragOffset!);
           }
+          _dragOrigin = null;
           _lastDragOffset = null;
+          _panTotal = Offset.zero;
+          _dragging = false;
         },
-        onLongPress: widget.onLongPress,
+        onPanCancel: () {
+          _dragOrigin = null;
+          _lastDragOffset = null;
+          _panTotal = Offset.zero;
+          _dragging = false;
+        },
         child: Material(
           elevation: 6,
           color: const Color(0xFF111827),
