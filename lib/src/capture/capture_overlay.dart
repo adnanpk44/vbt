@@ -1,7 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
 
-import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:uuid/uuid.dart';
@@ -21,11 +20,14 @@ class VibeBugCaptureOverlay extends StatefulWidget {
     required this.child,
     required this.boundaryKey,
     this.enabled = true,
+    this.navigatorKey,
   });
 
   final Widget child;
   final GlobalKey boundaryKey;
   final bool enabled;
+  /// Pass [GoRouter]'s `routerDelegate.navigatorKey` when using `MaterialApp.router` builder.
+  final GlobalKey<NavigatorState>? navigatorKey;
 
   @override
   State<VibeBugCaptureOverlay> createState() => _VibeBugCaptureOverlayState();
@@ -38,10 +40,10 @@ class _VibeBugCaptureOverlayState extends State<VibeBugCaptureOverlay> {
 
   Offset _bubbleOffset = const Offset(20, 120);
   bool _picking = false;
+  bool _capturing = false;
   FlutterWidgetHit? _hoverHit;
   final List<VibeBugScreenshotShot> _draftShots = [];
   bool _submitting = false;
-  PointerRoute? _pointerRoute;
 
   @override
   void initState() {
@@ -49,11 +51,8 @@ class _VibeBugCaptureOverlayState extends State<VibeBugCaptureOverlay> {
     unawaited(_loadBubbleOffset());
   }
 
-  @override
-  void dispose() {
-    _stopPicking();
-    super.dispose();
-  }
+  BuildContext? get _sheetContext =>
+      widget.navigatorKey?.currentContext ?? context;
 
   Future<void> _loadBubbleOffset() async {
     final prefs = await SharedPreferences.getInstance();
@@ -71,40 +70,33 @@ class _VibeBugCaptureOverlayState extends State<VibeBugCaptureOverlay> {
   }
 
   void _startPicking() {
-    if (!widget.enabled || !VibeBug.isInitialized) return;
+    if (!widget.enabled || !VibeBug.isInitialized || _capturing) return;
     setState(() {
       _picking = true;
       _hoverHit = null;
     });
-    _pointerRoute = _handlePointerEvent;
-    GestureBinding.instance.pointerRouter.addGlobalRoute(_pointerRoute!);
   }
 
   void _stopPicking() {
-    if (_pointerRoute != null) {
-      GestureBinding.instance.pointerRouter.removeGlobalRoute(_pointerRoute!);
-      _pointerRoute = null;
-    }
-    if (mounted) {
-      setState(() {
-        _picking = false;
-        _hoverHit = null;
-      });
-    }
+    if (!mounted) return;
+    setState(() {
+      _picking = false;
+      _hoverHit = null;
+    });
   }
 
-  void _handlePointerEvent(PointerEvent event) {
-    if (!_picking) return;
-    if (event is PointerHoverEvent || (event is PointerMoveEvent && event.down)) {
-      final hit = _inspector.hitTestAt(event.position, routeContext: context);
-      if (mounted) setState(() => _hoverHit = hit);
-    } else if (event is PointerUpEvent) {
-      unawaited(_captureAt(event.position));
+  void _updateHover(Offset position) {
+    final hit = _inspector.hitTestAt(position, routeContext: _sheetContext);
+    if (!mounted) return;
+    if (hit?.selector != _hoverHit?.selector ||
+        hit?.globalRect != _hoverHit?.globalRect) {
+      setState(() => _hoverHit = hit);
     }
   }
 
   Future<void> _captureAt(Offset position) async {
-    final hit = _inspector.hitTestAt(position, routeContext: context);
+    if (_capturing) return;
+    final hit = _inspector.hitTestAt(position, routeContext: _sheetContext);
     _stopPicking();
     if (hit == null) {
       _showSnack('Could not identify a widget at that position.');
@@ -115,14 +107,22 @@ class _VibeBugCaptureOverlayState extends State<VibeBugCaptureOverlay> {
       return;
     }
 
-    final ratio = MediaQuery.devicePixelRatioOf(context);
+    setState(() => _capturing = true);
+    final sheetContext = _sheetContext;
+    final ratio = sheetContext != null
+        ? MediaQuery.devicePixelRatioOf(sheetContext)
+        : MediaQuery.devicePixelRatioOf(context);
+
     final pair = await _screenshots.capturePair(
       boundaryKey: widget.boundaryKey,
       globalRect: hit.globalRect,
       pixelRatio: ratio,
     );
+    if (!mounted) return;
+    setState(() => _capturing = false);
+
     if (pair == null || pair.fullDataUrl.isEmpty) {
-      _showSnack('Screenshot capture failed. Wrap your app with VibeBugScope.');
+      _showSnack('Screenshot capture failed. Try again after the screen settles.');
       return;
     }
 
@@ -143,8 +143,12 @@ class _VibeBugCaptureOverlayState extends State<VibeBugCaptureOverlay> {
           htmlSnippet: hit.widgetSnippet,
           elementTag: hit.widgetType,
           elementId: hit.widgetKey ?? '',
-          viewportWidth: MediaQuery.sizeOf(context).width.round(),
-          viewportHeight: MediaQuery.sizeOf(context).height.round(),
+          viewportWidth: sheetContext != null
+              ? MediaQuery.sizeOf(sheetContext).width.round()
+              : 0,
+          viewportHeight: sheetContext != null
+              ? MediaQuery.sizeOf(sheetContext).height.round()
+              : 0,
           elementRect: hit.globalRect,
         ),
       );
@@ -162,13 +166,17 @@ class _VibeBugCaptureOverlayState extends State<VibeBugCaptureOverlay> {
     }
   }
 
-  Future<String?> _promptCaptureNote(FlutterWidgetHit hit) {
+  Future<String?> _promptCaptureNote(FlutterWidgetHit hit) async {
+    final navContext = _sheetContext;
+    if (navContext == null) return null;
+
     final controller = TextEditingController(
       text: hit.semanticsLabel.isNotEmpty ? hit.semanticsLabel : '',
     );
     return showModalBottomSheet<String>(
-      context: context,
+      context: navContext,
       isScrollControlled: true,
+      useSafeArea: true,
       builder: (ctx) {
         return Padding(
           padding: EdgeInsets.only(
@@ -181,7 +189,7 @@ class _VibeBugCaptureOverlayState extends State<VibeBugCaptureOverlay> {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              Text('Capture ${ _draftShots.length + 1 }', style: Theme.of(ctx).textTheme.titleMedium),
+              Text('Capture ${_draftShots.length + 1}', style: Theme.of(ctx).textTheme.titleMedium),
               const SizedBox(height: 8),
               Text('Widget: ${hit.widgetType}', style: Theme.of(ctx).textTheme.bodySmall),
               const SizedBox(height: 8),
@@ -195,7 +203,10 @@ class _VibeBugCaptureOverlayState extends State<VibeBugCaptureOverlay> {
               ),
               const SizedBox(height: 12),
               FilledButton(
-                onPressed: () => Navigator.pop(ctx, controller.text.trim()),
+                onPressed: () {
+                  final text = controller.text.trim();
+                  Navigator.pop(ctx, text.isEmpty ? hit.semanticsLabel : text);
+                },
                 child: const Text('Save capture'),
               ),
             ],
@@ -205,9 +216,11 @@ class _VibeBugCaptureOverlayState extends State<VibeBugCaptureOverlay> {
     );
   }
 
-  Future<bool?> _askAddAnother() {
+  Future<bool?> _askAddAnother() async {
+    final navContext = _sheetContext;
+    if (navContext == null) return false;
     return showDialog<bool>(
-      context: context,
+      context: navContext,
       builder: (ctx) => AlertDialog(
         title: const Text('Capture saved'),
         content: Text('${_draftShots.length}/$_maxCaptures screenshots added. Select another widget?'),
@@ -221,12 +234,16 @@ class _VibeBugCaptureOverlayState extends State<VibeBugCaptureOverlay> {
 
   Future<void> _openSubmitSheet() async {
     if (_draftShots.isEmpty) return;
+    final navContext = _sheetContext;
+    if (navContext == null) return;
+
     final summaryController = TextEditingController(
       text: _draftShots.first.description,
     );
     final sent = await showModalBottomSheet<bool>(
-      context: context,
+      context: navContext,
       isScrollControlled: true,
+      useSafeArea: true,
       builder: (ctx) {
         return StatefulBuilder(
           builder: (context, setLocalState) {
@@ -323,50 +340,73 @@ class _VibeBugCaptureOverlayState extends State<VibeBugCaptureOverlay> {
   }
 
   void _showSnack(String message) {
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+    final navContext = _sheetContext;
+    if (navContext == null || !navContext.mounted) return;
+    ScaffoldMessenger.of(navContext).showSnackBar(SnackBar(content: Text(message)));
   }
 
   @override
   Widget build(BuildContext context) {
     return Stack(
       clipBehavior: Clip.none,
+      fit: StackFit.expand,
       children: [
         widget.child,
-        if (_picking) ...[
-          const ModalBarrier(dismissible: false, color: Color(0x33000000)),
-          if (_hoverHit != null)
-            Positioned.fromRect(
-              rect: _hoverHit!.globalRect,
-              child: IgnorePointer(
-                child: DecoratedBox(
-                  decoration: BoxDecoration(
-                    border: Border.all(color: const Color(0xFF60A5FA), width: 2),
-                    color: const Color(0x2260A5FA),
+        if (_picking)
+          Positioned.fill(
+            child: Listener(
+              behavior: HitTestBehavior.translucent,
+              onPointerDown: (event) => _updateHover(event.position),
+              onPointerMove: (event) => _updateHover(event.position),
+              onPointerUp: (event) => unawaited(_captureAt(event.position)),
+              child: Stack(
+                fit: StackFit.expand,
+                children: [
+                  const ColoredBox(color: Color(0x33000000)),
+                  if (_hoverHit != null)
+                    Positioned.fromRect(
+                      rect: _hoverHit!.globalRect,
+                      child: IgnorePointer(
+                        child: DecoratedBox(
+                          decoration: BoxDecoration(
+                            border: Border.all(color: const Color(0xFF60A5FA), width: 2),
+                            color: const Color(0x2260A5FA),
+                          ),
+                        ),
+                      ),
+                    ),
+                  Positioned(
+                    top: MediaQuery.paddingOf(context).top + 8,
+                    left: 16,
+                    right: 16,
+                    child: Material(
+                      elevation: 4,
+                      borderRadius: BorderRadius.circular(12),
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                        child: Row(
+                          children: [
+                            const Expanded(
+                              child: Text('Tap the widget that looks wrong'),
+                            ),
+                            TextButton(onPressed: _stopPicking, child: const Text('Cancel')),
+                          ],
+                        ),
+                      ),
+                    ),
                   ),
-                ),
-              ),
-            ),
-          Positioned(
-            top: MediaQuery.paddingOf(context).top + 8,
-            left: 16,
-            right: 16,
-            child: Material(
-              elevation: 4,
-              borderRadius: BorderRadius.circular(12),
-              child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-                child: Row(
-                  children: [
-                    const Expanded(child: Text('Tap a widget to capture it. Esc cancel not available on mobile — use Cancel.')),
-                    TextButton(onPressed: _stopPicking, child: const Text('Cancel')),
-                  ],
-                ),
+                ],
               ),
             ),
           ),
-        ],
-        if (widget.enabled && !_picking)
+        if (_capturing)
+          const Positioned.fill(
+            child: ColoredBox(
+              color: Color(0x66000000),
+              child: Center(child: CircularProgressIndicator()),
+            ),
+          ),
+        if (widget.enabled && !_picking && !_capturing)
           _DraggableReportBubble(
             offset: _bubbleOffset,
             draftCount: _draftShots.length,
@@ -420,8 +460,8 @@ class _DraggableReportBubbleState extends State<_DraggableReportBubble> {
   Widget build(BuildContext context) {
     final size = MediaQuery.sizeOf(context);
     final padding = MediaQuery.paddingOf(context);
-    final maxX = size.width - 72;
-    final maxY = size.height - padding.bottom - 72;
+    final maxX = size.width - 120;
+    final maxY = size.height - padding.bottom - 56;
     final dx = widget.offset.dx.clamp(8.0, maxX);
     final dy = widget.offset.dy.clamp(padding.top + 8, maxY);
 
@@ -429,7 +469,7 @@ class _DraggableReportBubbleState extends State<_DraggableReportBubble> {
       left: dx,
       top: dy,
       child: GestureDetector(
-        onPanStart: (details) {
+        onPanStart: (_) {
           _dragOrigin = widget.offset;
           _moved = false;
         },
@@ -443,9 +483,7 @@ class _DraggableReportBubbleState extends State<_DraggableReportBubble> {
           widget.onOffsetChanged(next);
         },
         onPanEnd: (_) {
-          if (!_moved) {
-            widget.onTap();
-          }
+          if (!_moved) widget.onTap();
           _dragOrigin = null;
         },
         onLongPress: widget.onLongPress,
@@ -510,10 +548,13 @@ class VibeBugScope extends StatefulWidget {
     super.key,
     required this.child,
     this.showReportButton = true,
+    this.navigatorKey,
   });
 
   final Widget child;
   final bool showReportButton;
+  /// Required for modals when [VibeBugScope] is used inside `MaterialApp.router` builder.
+  final GlobalKey<NavigatorState>? navigatorKey;
 
   @override
   State<VibeBugScope> createState() => _VibeBugScopeState();
@@ -527,6 +568,7 @@ class _VibeBugScopeState extends State<VibeBugScope> {
     return VibeBugCaptureOverlay(
       boundaryKey: _boundaryKey,
       enabled: widget.showReportButton,
+      navigatorKey: widget.navigatorKey,
       child: RepaintBoundary(
         key: _boundaryKey,
         child: widget.child,

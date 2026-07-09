@@ -1,6 +1,8 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:ui' as ui;
 
+import 'package:flutter/scheduler.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/widgets.dart';
 
@@ -8,39 +10,62 @@ import 'package:flutter/widgets.dart';
 class VibeBugScreenshotCapture {
   const VibeBugScreenshotCapture();
 
+  /// Caps GPU memory use on high-DPI phones (e.g. 480dpi Android).
+  static const double maxPixelRatio = 2.0;
+
   Future<({String fullDataUrl, String selectedDataUrl})?> capturePair({
     required GlobalKey boundaryKey,
     required Rect globalRect,
     double pixelRatio = 1,
   }) async {
+    await _waitForNextFrame();
+
     final boundary = boundaryKey.currentContext?.findRenderObject();
     if (boundary is! RenderRepaintBoundary) return null;
 
-    final ratio = pixelRatio > 0 ? pixelRatio.toDouble() : 1.0;
-    final fullImage = await boundary.toImage(pixelRatio: ratio);
-    final fullDataUrl = await _encodePngDataUrl(fullImage);
+    final ratio = (pixelRatio > 0 ? pixelRatio : 1.0).clamp(1.0, maxPixelRatio);
 
-    final boundaryBox = boundary;
-  final boundaryOffset = boundaryBox.localToGlobal(Offset.zero);
-    final localRect = Rect.fromLTWH(
-      globalRect.left - boundaryOffset.dx,
-      globalRect.top - boundaryOffset.dy,
-      globalRect.width,
-      globalRect.height,
-    );
+    try {
+      final fullImage = await boundary.toImage(pixelRatio: ratio);
+      final fullDataUrl = await _encodePngDataUrl(fullImage);
+      if (fullDataUrl.isEmpty) {
+        fullImage.dispose();
+        return null;
+      }
 
-    final clamped = _clampRect(localRect, Size(boundaryBox.size.width, boundaryBox.size.height));
-    if (clamped.width < 2 || clamped.height < 2) {
+      final boundaryOffset = boundary.localToGlobal(Offset.zero);
+      final localRect = Rect.fromLTWH(
+        globalRect.left - boundaryOffset.dx,
+        globalRect.top - boundaryOffset.dy,
+        globalRect.width,
+        globalRect.height,
+      );
+
+      final clamped = _clampRect(localRect, Size(boundary.size.width, boundary.size.height));
+      if (clamped.width < 2 || clamped.height < 2) {
+        fullImage.dispose();
+        return (fullDataUrl: fullDataUrl, selectedDataUrl: fullDataUrl);
+      }
+
+      final selectedImage = await _cropImage(fullImage, clamped, ratio);
+      final selectedDataUrl = await _encodePngDataUrl(selectedImage);
       fullImage.dispose();
-      return (fullDataUrl: fullDataUrl, selectedDataUrl: fullDataUrl);
+      selectedImage.dispose();
+
+      if (selectedDataUrl.isEmpty) {
+        return (fullDataUrl: fullDataUrl, selectedDataUrl: fullDataUrl);
+      }
+
+      return (fullDataUrl: fullDataUrl, selectedDataUrl: selectedDataUrl);
+    } catch (_) {
+      return null;
     }
+  }
 
-    final selectedImage = await _cropImage(fullImage, clamped, ratio);
-    final selectedDataUrl = await _encodePngDataUrl(selectedImage);
-    fullImage.dispose();
-    selectedImage.dispose();
-
-    return (fullDataUrl: fullDataUrl, selectedDataUrl: selectedDataUrl);
+  Future<void> _waitForNextFrame() {
+    final completer = Completer<void>();
+    SchedulerBinding.instance.addPostFrameCallback((_) => completer.complete());
+    return completer.future;
   }
 
   Rect _clampRect(Rect rect, Size bounds) {
@@ -52,8 +77,8 @@ class VibeBugScreenshotCapture {
   }
 
   Future<ui.Image> _cropImage(ui.Image source, Rect sourceRect, double pixelRatio) async {
-    final width = (sourceRect.width * pixelRatio).round().clamp(1, 4096);
-    final height = (sourceRect.height * pixelRatio).round().clamp(1, 4096);
+    final width = (sourceRect.width * pixelRatio).round().clamp(1, 2048);
+    final height = (sourceRect.height * pixelRatio).round().clamp(1, 2048);
     final recorder = ui.PictureRecorder();
     final canvas = ui.Canvas(recorder);
     final src = Rect.fromLTWH(

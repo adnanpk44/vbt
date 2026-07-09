@@ -62,7 +62,18 @@ class FlutterWidgetInspector {
     final size = box.size;
     if (size.width < 2 || size.height < 2) return false;
     final typeName = box.runtimeType.toString();
-    if (typeName.contains('VibeBug')) return false;
+    if (typeName.contains('VibeBug') ||
+        typeName.contains('ModalBarrier') ||
+        typeName.contains('SnapshotWidget')) {
+      return false;
+    }
+    final creator = _creatorWidget(box);
+    if (creator != null) {
+      final widgetType = creator.runtimeType.toString();
+      if (widgetType.contains('VibeBug') || widgetType.contains('ModalBarrier')) {
+        return false;
+      }
+    }
     return true;
   }
 

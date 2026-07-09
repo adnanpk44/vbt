@@ -47,7 +47,14 @@ Future<void> main() async {
 
 ## Visual bug reporting (recommended)
 
-Wrap your app with `VibeBugScope`. Testers get a draggable **Report** bubble:
+Wrap your app with `VibeBugScope`. When using `MaterialApp.router`, pass the router navigator key:
+
+```dart
+VibeBugScope(
+  navigatorKey: goRouter.routerDelegate.navigatorKey,
+  child: MyApp(),
+)
+```
 
 1. **Drag** the bubble to reposition it (position is remembered)
 2. **Tap** the bubble → hover highlights widgets → **tap a widget** to capture it
