@@ -41,11 +41,11 @@ class _VibeBugCaptureOverlayState extends State<VibeBugCaptureOverlay> {
 
   Offset _bubbleOffset = const Offset(20, 120);
   bool _picking = false;
-  bool _pickingReady = false;
   bool _capturing = false;
   FlutterWidgetHit? _hoverHit;
   final List<VibeBugScreenshotShot> _draftShots = [];
   bool _submitting = false;
+  OverlayEntry? _pickerOverlay;
 
   @override
   void initState() {
@@ -55,6 +55,30 @@ class _VibeBugCaptureOverlayState extends State<VibeBugCaptureOverlay> {
 
   BuildContext? get _sheetContext =>
       widget.navigatorKey?.currentContext ?? context;
+
+  OverlayState? get _navigatorOverlay {
+    final fromKey = widget.navigatorKey?.currentState?.overlay;
+    if (fromKey != null) return fromKey;
+
+    final sheet = _sheetContext;
+    if (sheet != null) {
+      final fromSheet = Overlay.maybeOf(sheet, rootOverlay: true);
+      if (fromSheet != null) return fromSheet;
+    }
+
+    return Overlay.maybeOf(context, rootOverlay: true);
+  }
+
+  @override
+  void dispose() {
+    _removePickerOverlay();
+    super.dispose();
+  }
+
+  void _removePickerOverlay() {
+    _pickerOverlay?.remove();
+    _pickerOverlay = null;
+  }
 
   Future<void> _loadBubbleOffset() async {
     final prefs = await SharedPreferences.getInstance();
@@ -83,22 +107,27 @@ class _VibeBugCaptureOverlayState extends State<VibeBugCaptureOverlay> {
 
   void _startPicking() {
     if (!widget.enabled || !VibeBug.isInitialized || _capturing || _picking) return;
+
+    final overlay = _navigatorOverlay;
+    if (overlay == null) {
+      _showSnack('Could not open widget picker. Pass navigatorKey to VibeBugScope.');
+      return;
+    }
+
     setState(() {
       _picking = true;
-      _pickingReady = false;
       _hoverHit = null;
     });
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted || !_picking) return;
-      setState(() => _pickingReady = true);
-    });
+
+    _pickerOverlay = OverlayEntry(builder: _buildPickerOverlay);
+    overlay.insert(_pickerOverlay!);
   }
 
   void _stopPicking() {
+    _removePickerOverlay();
     if (!mounted) return;
     setState(() {
       _picking = false;
-      _pickingReady = false;
       _hoverHit = null;
     });
   }
@@ -112,7 +141,8 @@ class _VibeBugCaptureOverlayState extends State<VibeBugCaptureOverlay> {
     if (!mounted) return;
     if (hit?.selector != _hoverHit?.selector ||
         hit?.globalRect != _hoverHit?.globalRect) {
-      setState(() => _hoverHit = hit);
+      _hoverHit = hit;
+      _pickerOverlay?.markNeedsBuild();
     }
   }
 
@@ -380,6 +410,74 @@ class _VibeBugCaptureOverlayState extends State<VibeBugCaptureOverlay> {
     );
   }
 
+  Widget _buildPickerOverlay(BuildContext overlayContext) {
+    final overlayBox = overlayContext.findRenderObject() as RenderBox?;
+    final highlightRect =
+        overlayBox == null ? null : _highlightRectInOverlay(overlayBox);
+    final topPadding = MediaQuery.paddingOf(overlayContext).top;
+
+    return Positioned.fill(
+      child: Material(
+        type: MaterialType.transparency,
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            const ColoredBox(color: Color(0x55000000)),
+            Listener(
+              behavior: HitTestBehavior.translucent,
+              onPointerDown: (event) {
+                final global = overlayBox?.localToGlobal(event.position) ?? event.position;
+                _updateHover(global);
+              },
+              onPointerMove: (event) {
+                final global = overlayBox?.localToGlobal(event.position) ?? event.position;
+                _updateHover(global);
+              },
+              onPointerUp: (event) {
+                final global = overlayBox?.localToGlobal(event.position) ?? event.position;
+                unawaited(_captureAt(global));
+              },
+            ),
+            if (highlightRect != null)
+              Positioned.fromRect(
+                rect: highlightRect,
+                child: const IgnorePointer(
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      border: Border.fromBorderSide(
+                        BorderSide(color: Color(0xFF60A5FA), width: 2),
+                      ),
+                      color: Color(0x2260A5FA),
+                    ),
+                  ),
+                ),
+              ),
+            Positioned(
+              top: topPadding + 8,
+              left: 16,
+              right: 16,
+              child: Material(
+                elevation: 4,
+                borderRadius: BorderRadius.circular(12),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                  child: Row(
+                    children: [
+                      const Expanded(
+                        child: Text('Tap the widget that looks wrong'),
+                      ),
+                      TextButton(onPressed: _stopPicking, child: const Text('Cancel')),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return SizedBox.expand(
@@ -388,81 +486,6 @@ class _VibeBugCaptureOverlayState extends State<VibeBugCaptureOverlay> {
         fit: StackFit.expand,
         children: [
           widget.child,
-          if (_picking)
-            Positioned.fill(
-              child: LayoutBuilder(
-                builder: (context, _) {
-                  final overlayBox = context.findRenderObject() as RenderBox?;
-                  final highlightRect =
-                      overlayBox == null ? null : _highlightRectInOverlay(overlayBox);
-
-                  return Stack(
-                    fit: StackFit.expand,
-                    children: [
-                      Positioned.fill(
-                        child: Listener(
-                          behavior: HitTestBehavior.translucent,
-                          onPointerDown: (event) {
-                            if (!_pickingReady) return;
-                            final global = overlayBox?.localToGlobal(event.position) ?? event.position;
-                            _updateHover(global);
-                          },
-                          onPointerMove: (event) {
-                            if (!_pickingReady) return;
-                            final global = overlayBox?.localToGlobal(event.position) ?? event.position;
-                            _updateHover(global);
-                          },
-                          onPointerUp: (event) {
-                            if (!_pickingReady) return;
-                            final global = overlayBox?.localToGlobal(event.position) ?? event.position;
-                            unawaited(_captureAt(global));
-                          },
-                        ),
-                      ),
-                      const Positioned.fill(
-                        child: IgnorePointer(
-                          child: ColoredBox(color: Color(0x33000000)),
-                        ),
-                      ),
-                      if (highlightRect != null)
-                        Positioned.fromRect(
-                          rect: highlightRect,
-                          child: const IgnorePointer(
-                            child: DecoratedBox(
-                              decoration: BoxDecoration(
-                                border: Border.fromBorderSide(
-                                  BorderSide(color: Color(0xFF60A5FA), width: 2),
-                                ),
-                                color: Color(0x2260A5FA),
-                              ),
-                            ),
-                          ),
-                        ),
-                      Positioned(
-                        top: MediaQuery.paddingOf(context).top + 8,
-                        left: 16,
-                        right: 16,
-                        child: Material(
-                          elevation: 4,
-                          borderRadius: BorderRadius.circular(12),
-                          child: Padding(
-                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-                            child: Row(
-                              children: [
-                                const Expanded(
-                                  child: Text('Tap the widget that looks wrong'),
-                                ),
-                                TextButton(onPressed: _stopPicking, child: const Text('Cancel')),
-                              ],
-                            ),
-                          ),
-                        ),
-                      ),
-                    ],
-                  );
-                },
-              ),
-            ),
         if (_capturing)
           const Positioned.fill(
             child: ColoredBox(
@@ -518,10 +541,28 @@ class _DraggableReportBubble extends StatefulWidget {
 }
 
 class _DraggableReportBubbleState extends State<_DraggableReportBubble> {
+  int? _activePointer;
   Offset? _dragOrigin;
   Offset _panTotal = Offset.zero;
   Offset? _lastDragOffset;
   bool _dragging = false;
+  Timer? _longPressTimer;
+  bool _longPressFired = false;
+
+  @override
+  void dispose() {
+    _longPressTimer?.cancel();
+    super.dispose();
+  }
+
+  void _resetPointer() {
+    _activePointer = null;
+    _dragOrigin = null;
+    _panTotal = Offset.zero;
+    _lastDragOffset = null;
+    _dragging = false;
+    _longPressFired = false;
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -535,20 +576,31 @@ class _DraggableReportBubbleState extends State<_DraggableReportBubble> {
     return Positioned(
       left: dx,
       top: dy,
-      child: GestureDetector(
+      child: Listener(
         behavior: HitTestBehavior.opaque,
-        onLongPress: widget.onLongPress,
-        onPanStart: (_) {
+        onPointerDown: (event) {
+          _activePointer = event.pointer;
           _dragOrigin = widget.offset;
           _panTotal = Offset.zero;
           _lastDragOffset = widget.offset;
           _dragging = false;
+          _longPressFired = false;
+          _longPressTimer?.cancel();
+          _longPressTimer = Timer(const Duration(milliseconds: 500), () {
+            if (_activePointer != null && !_dragging) {
+              _longPressFired = true;
+              widget.onLongPress();
+            }
+          });
         },
-        onPanUpdate: (details) {
-          if (_dragOrigin == null) return;
-          _panTotal += details.delta;
+        onPointerMove: (event) {
+          if (event.pointer != _activePointer || _dragOrigin == null) return;
+          _panTotal += event.delta;
           if (!_dragging && _panTotal.distance < _bubbleDragSlop) return;
-          _dragging = true;
+          if (!_dragging) {
+            _longPressTimer?.cancel();
+            _dragging = true;
+          }
           final next = Offset(
             (_dragOrigin!.dx + _panTotal.dx).clamp(8.0, maxX),
             (_dragOrigin!.dy + _panTotal.dy).clamp(padding.top + 8, maxY),
@@ -556,22 +608,22 @@ class _DraggableReportBubbleState extends State<_DraggableReportBubble> {
           _lastDragOffset = next;
           widget.onOffsetChanged(next);
         },
-        onPanEnd: (_) {
-          if (!_dragging) {
-            widget.onTap();
-          } else if (_lastDragOffset != null) {
-            widget.onDragEnd(_lastDragOffset!);
+        onPointerUp: (event) {
+          if (event.pointer != _activePointer) return;
+          _longPressTimer?.cancel();
+          if (!_longPressFired) {
+            if (!_dragging) {
+              widget.onTap();
+            } else if (_lastDragOffset != null) {
+              widget.onDragEnd(_lastDragOffset!);
+            }
           }
-          _dragOrigin = null;
-          _lastDragOffset = null;
-          _panTotal = Offset.zero;
-          _dragging = false;
+          _resetPointer();
         },
-        onPanCancel: () {
-          _dragOrigin = null;
-          _lastDragOffset = null;
-          _panTotal = Offset.zero;
-          _dragging = false;
+        onPointerCancel: (event) {
+          if (event.pointer != _activePointer) return;
+          _longPressTimer?.cancel();
+          _resetPointer();
         },
         child: Material(
           elevation: 6,
