@@ -82,6 +82,7 @@ class _CaptureRegionEditorState extends State<CaptureRegionEditor> {
   bool _exporting = false;
 
   static const _handleSize = 24.0;
+  static const _minCropSize = 40.0;
 
   @override
   void initState() {
@@ -89,6 +90,7 @@ class _CaptureRegionEditorState extends State<CaptureRegionEditor> {
     _cropRect = VibeBugScreenshotCapture.clampRect(
       widget.initialCropRect,
       widget.imageLogicalSize,
+      minSize: _minCropSize,
     );
     if (widget.hit.semanticsLabel.isNotEmpty) {
       _noteController.text = widget.hit.semanticsLabel;
@@ -152,19 +154,26 @@ class _CaptureRegionEditorState extends State<CaptureRegionEditor> {
       return;
     }
 
-    if (_activeHandle == null || _dragStart == null || _cropAtDragStart == null) return;
+    if (_activeHandle == null ||
+        _dragStart == null ||
+        _cropAtDragStart == null) {
+      return;
+    }
     final delta = logical - _dragStart!;
     setState(() {
       _cropRect = _resizeCrop(_cropAtDragStart!, _activeHandle!, delta);
-      _cropRect = VibeBugScreenshotCapture.clampRect(_cropRect, widget.imageLogicalSize);
-      if (_cropRect.width < 32 || _cropRect.height < 32) {
-        _cropRect = _cropAtDragStart!;
-      }
+      _cropRect = VibeBugScreenshotCapture.clampRect(
+        _cropRect,
+        widget.imageLogicalSize,
+        minSize: _minCropSize,
+      );
     });
   }
 
   void _onPanEnd(DragEndDetails details) {
-    if (_mode == _EditorMode.highlight && _activeStroke != null && _activeStroke!.length > 1) {
+    if (_mode == _EditorMode.highlight &&
+        _activeStroke != null &&
+        _activeStroke!.length > 1) {
       setState(() {
         _strokes.add(VibeBugHighlightStroke(List.from(_activeStroke!)));
         _activeStroke = null;
@@ -182,29 +191,37 @@ class _CaptureRegionEditorState extends State<CaptureRegionEditor> {
       case _CropHandle.move:
         return base.shift(delta);
       case _CropHandle.topLeft:
-        return Rect.fromLTRB(base.left + delta.dx, base.top + delta.dy, base.right, base.bottom);
+        return Rect.fromLTRB(
+            base.left + delta.dx, base.top + delta.dy, base.right, base.bottom);
       case _CropHandle.topRight:
-        return Rect.fromLTRB(base.left, base.top + delta.dy, base.right + delta.dx, base.bottom);
+        return Rect.fromLTRB(
+            base.left, base.top + delta.dy, base.right + delta.dx, base.bottom);
       case _CropHandle.bottomLeft:
-        return Rect.fromLTRB(base.left + delta.dx, base.top, base.right, base.bottom + delta.dy);
+        return Rect.fromLTRB(
+            base.left + delta.dx, base.top, base.right, base.bottom + delta.dy);
       case _CropHandle.bottomRight:
-        return Rect.fromLTRB(base.left, base.top, base.right + delta.dx, base.bottom + delta.dy);
+        return Rect.fromLTRB(
+            base.left, base.top, base.right + delta.dx, base.bottom + delta.dy);
     }
   }
 
   _CropHandle? _hitHandle(Offset logical) {
     final r = _cropRect;
     final hit = _handleSize;
-    if (Rect.fromCenter(center: r.topLeft, width: hit, height: hit).contains(logical)) {
+    if (Rect.fromCenter(center: r.topLeft, width: hit, height: hit)
+        .contains(logical)) {
       return _CropHandle.topLeft;
     }
-    if (Rect.fromCenter(center: r.topRight, width: hit, height: hit).contains(logical)) {
+    if (Rect.fromCenter(center: r.topRight, width: hit, height: hit)
+        .contains(logical)) {
       return _CropHandle.topRight;
     }
-    if (Rect.fromCenter(center: r.bottomLeft, width: hit, height: hit).contains(logical)) {
+    if (Rect.fromCenter(center: r.bottomLeft, width: hit, height: hit)
+        .contains(logical)) {
       return _CropHandle.bottomLeft;
     }
-    if (Rect.fromCenter(center: r.bottomRight, width: hit, height: hit).contains(logical)) {
+    if (Rect.fromCenter(center: r.bottomRight, width: hit, height: hit)
+        .contains(logical)) {
       return _CropHandle.bottomRight;
     }
     if (r.contains(logical)) return _CropHandle.move;
@@ -230,9 +247,12 @@ class _CaptureRegionEditorState extends State<CaptureRegionEditor> {
                 ? const SizedBox(
                     width: 18,
                     height: 18,
-                    child: CircularProgressIndicator(strokeWidth: 2, color: Color(0xFFBEF264)),
+                    child: CircularProgressIndicator(
+                        strokeWidth: 2, color: Color(0xFFBEF264)),
                   )
-                : const Text('Save', style: TextStyle(color: Color(0xFFBEF264), fontWeight: FontWeight.w600)),
+                : const Text('Save',
+                    style: TextStyle(
+                        color: Color(0xFFBEF264), fontWeight: FontWeight.w600)),
           ),
         ],
       ),
@@ -243,7 +263,8 @@ class _CaptureRegionEditorState extends State<CaptureRegionEditor> {
               builder: (context, constraints) {
                 final layout = _ImageLayout.compute(
                   imageSize: widget.imageLogicalSize,
-                  maxSize: Size(constraints.maxWidth, constraints.maxHeight - 8),
+                  maxSize:
+                      Size(constraints.maxWidth, constraints.maxHeight - 8),
                 );
                 return GestureDetector(
                   onPanStart: (d) => _onPanStart(d, layout),
@@ -255,17 +276,23 @@ class _CaptureRegionEditorState extends State<CaptureRegionEditor> {
                       height: layout.displaySize.height,
                       child: Stack(
                         children: [
-                          Positioned.fill(child: _EditorImage(dataUrl: widget.fullDataUrl)),
+                          Positioned.fill(
+                              child: _EditorImage(dataUrl: widget.fullDataUrl)),
                           Positioned.fill(
                             child: CustomPaint(
                               painter: _EditorPainter(
-                                cropRect: layout.logicalToDisplayRect(_cropRect),
+                                cropRect:
+                                    layout.logicalToDisplayRect(_cropRect),
                                 strokes: [
                                   ..._strokes.map(
-                                    (s) => s.points.map(layout.logicalToDisplay).toList(),
+                                    (s) => s.points
+                                        .map(layout.logicalToDisplay)
+                                        .toList(),
                                   ),
                                   if (_activeStroke != null)
-                                    _activeStroke!.map(layout.logicalToDisplay).toList(),
+                                    _activeStroke!
+                                        .map(layout.logicalToDisplay)
+                                        .toList(),
                                 ],
                               ),
                             ),
@@ -294,7 +321,10 @@ class _CaptureRegionEditorState extends State<CaptureRegionEditor> {
           children: [
             SegmentedButton<_EditorMode>(
               segments: const [
-                ButtonSegment(value: _EditorMode.crop, label: Text('Crop'), icon: Icon(Icons.crop, size: 18)),
+                ButtonSegment(
+                    value: _EditorMode.crop,
+                    label: Text('Crop'),
+                    icon: Icon(Icons.crop, size: 18)),
                 ButtonSegment(
                   value: _EditorMode.highlight,
                   label: Text('Highlight'),
@@ -302,15 +332,38 @@ class _CaptureRegionEditorState extends State<CaptureRegionEditor> {
                 ),
               ],
               selected: {_mode},
-              onSelectionChanged: _exporting ? null : (s) => setState(() => _mode = s.first),
+              onSelectionChanged:
+                  _exporting ? null : (s) => setState(() => _mode = s.first),
             ),
             const Spacer(),
-            if (_strokes.isNotEmpty)
-              TextButton.icon(
-                onPressed: _exporting ? null : () => setState(() => _strokes.clear()),
-                icon: const Icon(Icons.undo, size: 18),
-                label: const Text('Clear marks'),
+            IconButton(
+              tooltip: 'Reset crop',
+              onPressed: _exporting
+                  ? null
+                  : () => setState(() {
+                        _cropRect = VibeBugScreenshotCapture.clampRect(
+                          widget.initialCropRect,
+                          widget.imageLogicalSize,
+                          minSize: _minCropSize,
+                        );
+                      }),
+              icon:
+                  const Icon(Icons.center_focus_strong, color: Colors.white70),
+            ),
+            if (_strokes.isNotEmpty) ...[
+              IconButton(
+                tooltip: 'Undo mark',
+                onPressed: _exporting
+                    ? null
+                    : () => setState(() => _strokes.removeLast()),
+                icon: const Icon(Icons.undo, color: Colors.white70),
               ),
+              TextButton(
+                onPressed:
+                    _exporting ? null : () => setState(() => _strokes.clear()),
+                child: const Text('Clear marks'),
+              ),
+            ],
           ],
         ),
       ),
@@ -331,7 +384,8 @@ class _CaptureRegionEditorState extends State<CaptureRegionEditor> {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           mainAxisSize: MainAxisSize.min,
           children: [
-            Text('Widget: ${widget.hit.widgetType}', style: const TextStyle(color: Colors.white70, fontSize: 12)),
+            Text('Widget: ${widget.hit.widgetType}',
+                style: const TextStyle(color: Colors.white70, fontSize: 12)),
             const SizedBox(height: 4),
             Text(
               widget.hit.selector,
@@ -341,7 +395,8 @@ class _CaptureRegionEditorState extends State<CaptureRegionEditor> {
             ),
             if (widget.hit.semanticsLabel.isNotEmpty) ...[
               const SizedBox(height: 4),
-              Text('Text: ${widget.hit.semanticsLabel}', style: const TextStyle(color: Colors.white60, fontSize: 12)),
+              Text('Text: ${widget.hit.semanticsLabel}',
+                  style: const TextStyle(color: Colors.white60, fontSize: 12)),
             ],
             const SizedBox(height: 8),
             TextField(
@@ -352,7 +407,8 @@ class _CaptureRegionEditorState extends State<CaptureRegionEditor> {
                 labelText: 'What is wrong with this widget?',
                 labelStyle: TextStyle(color: Color(0xFF94A3B8)),
                 border: OutlineInputBorder(),
-                enabledBorder: OutlineInputBorder(borderSide: BorderSide(color: Color(0xFF334155))),
+                enabledBorder: OutlineInputBorder(
+                    borderSide: BorderSide(color: Color(0xFF334155))),
               ),
             ),
           ],
@@ -370,7 +426,8 @@ class _ImageLayout {
   final Size displaySize;
   final double scale;
 
-  static _ImageLayout compute({required Size imageSize, required Size maxSize}) {
+  static _ImageLayout compute(
+      {required Size imageSize, required Size maxSize}) {
     final fitted = _fitScale(imageSize, maxSize);
     return _ImageLayout(
       displaySize: Size(imageSize.width * fitted, imageSize.height * fitted),
@@ -410,7 +467,8 @@ class _EditorImage extends StatelessWidget {
     } catch (_) {
       return const ColoredBox(
         color: Color(0xFF1E293B),
-        child: Center(child: Icon(Icons.broken_image_outlined, color: Colors.white38)),
+        child: Center(
+            child: Icon(Icons.broken_image_outlined, color: Colors.white38)),
       );
     }
   }
@@ -439,7 +497,12 @@ class _EditorPainter extends CustomPainter {
     );
 
     final handlePaint = Paint()..color = const Color(0xFF60A5FA);
-    for (final c in [cropRect.topLeft, cropRect.topRight, cropRect.bottomLeft, cropRect.bottomRight]) {
+    for (final c in [
+      cropRect.topLeft,
+      cropRect.topRight,
+      cropRect.bottomLeft,
+      cropRect.bottomRight
+    ]) {
       canvas.drawCircle(c, 6, handlePaint);
     }
 
@@ -450,6 +513,8 @@ class _EditorPainter extends CustomPainter {
       ..strokeCap = StrokeCap.round
       ..strokeJoin = StrokeJoin.round;
 
+    canvas.save();
+    canvas.clipRect(cropRect);
     for (final stroke in strokes) {
       if (stroke.length < 2) continue;
       final path = Path()..moveTo(stroke.first.dx, stroke.first.dy);
@@ -458,10 +523,12 @@ class _EditorPainter extends CustomPainter {
       }
       canvas.drawPath(path, strokePaint);
     }
+    canvas.restore();
   }
 
   @override
   bool shouldRepaint(covariant _EditorPainter oldDelegate) {
-    return oldDelegate.cropRect != cropRect || oldDelegate.strokes.length != strokes.length;
+    return oldDelegate.cropRect != cropRect ||
+        oldDelegate.strokes.length != strokes.length;
   }
 }

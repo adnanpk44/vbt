@@ -18,7 +18,8 @@ class FlutterWidgetInspector {
     final views = WidgetsBinding.instance.platformDispatcher.views;
     if (views.isEmpty) return null;
 
-    WidgetsBinding.instance.hitTestInView(result, globalPosition, views.first.viewId);
+    WidgetsBinding.instance
+        .hitTestInView(result, globalPosition, views.first.viewId);
 
     final boundaryObject = boundaryKey?.currentContext?.findRenderObject();
     RenderBox? targetBox;
@@ -28,8 +29,13 @@ class FlutterWidgetInspector {
       final target = entry.target;
       if (target is! RenderBox) continue;
       if (target is RenderView) continue;
-      if (boundaryObject != null && !_isDescendantOf(target, boundaryObject)) continue;
-      if (excludeSubtreeRoot != null && _isDescendantOf(target, excludeSubtreeRoot)) continue;
+      if (boundaryObject != null && !_isDescendantOf(target, boundaryObject)) {
+        continue;
+      }
+      if (excludeSubtreeRoot != null &&
+          _isDescendantOf(target, excludeSubtreeRoot)) {
+        continue;
+      }
       if (!_isInspectableBox(target)) continue;
 
       final label = _widgetLabel(target);
@@ -49,7 +55,8 @@ class FlutterWidgetInspector {
 
     final widgetType = _widgetType(targetBox);
     final widgetKey = _widgetKey(targetBox);
-    final selector = _buildSelector(widgetType: widgetType, widgetKey: widgetKey, ancestors: ancestorTrail);
+    final selector = _buildSelector(
+        widgetType: widgetType, widgetKey: widgetKey, ancestors: ancestorTrail);
     final semanticsLabel = _semanticsLabel(targetBox);
     final widgetSnippet = _widgetSnippet(targetBox, semanticsLabel);
     final routeName = _routeName(routeContext);
@@ -78,7 +85,8 @@ class FlutterWidgetInspector {
     final creator = _creatorWidget(box);
     if (creator != null) {
       final widgetType = creator.runtimeType.toString();
-      if (widgetType.contains('VibeBug') || widgetType.contains('ModalBarrier')) {
+      if (widgetType.contains('VibeBug') ||
+          widgetType.contains('ModalBarrier')) {
         return false;
       }
     }
@@ -130,7 +138,8 @@ class FlutterWidgetInspector {
     required String? widgetKey,
     required List<String> ancestors,
   }) {
-    final keyPart = widgetKey == null || widgetKey.isEmpty ? '' : '[key=$widgetKey]';
+    final keyPart =
+        widgetKey == null || widgetKey.isEmpty ? '' : '[key=$widgetKey]';
     final chain = ancestors.isEmpty ? widgetType : ancestors.reversed.join('>');
     return 'flutter:$widgetType$keyPart>$chain';
   }
@@ -141,8 +150,12 @@ class FlutterWidgetInspector {
       return creator.properties.label ?? creator.properties.value ?? '';
     }
     if (creator is Text) {
-      if (creator.data != null && creator.data!.isNotEmpty) return creator.data!;
-      if (creator.textSpan != null) return creator.textSpan!.toPlainText();
+      if (creator.data != null && creator.data!.isNotEmpty) {
+        return creator.data!;
+      }
+      if (creator.textSpan != null) {
+        return creator.textSpan!.toPlainText();
+      }
     }
     if (creator is Icon) {
       return creator.semanticLabel ?? '';
@@ -157,7 +170,8 @@ class FlutterWidgetInspector {
     final buffer = StringBuffer()
       ..writeln('widget: ${_widgetType(box)}')
       ..writeln('renderObject: ${box.runtimeType}')
-      ..writeln('size: ${box.size.width.toStringAsFixed(1)} x ${box.size.height.toStringAsFixed(1)}');
+      ..writeln(
+          'size: ${box.size.width.toStringAsFixed(1)} x ${box.size.height.toStringAsFixed(1)}');
     if (semanticsLabel.isNotEmpty) {
       buffer.writeln('semantics: $semanticsLabel');
     }

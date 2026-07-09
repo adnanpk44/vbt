@@ -6,6 +6,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:uuid/uuid.dart';
 
 import '../vibebug.dart';
+import '../api_client.dart';
 import 'capture_models.dart';
 import 'capture_region_editor.dart';
 import 'screenshot_capture.dart';
@@ -108,11 +109,14 @@ class _VibeBugCaptureOverlayState extends State<VibeBugCaptureOverlay> {
   }
 
   void _startPicking() {
-    if (!widget.enabled || !VibeBug.isInitialized || _capturing || _picking) return;
+    if (!widget.enabled || !VibeBug.isInitialized || _capturing || _picking) {
+      return;
+    }
 
     final overlay = _navigatorOverlay;
     if (overlay == null) {
-      _showSnack('Could not open widget picker. Pass navigatorKey to VibeBugScope.');
+      _showSnack(
+          'Could not open widget picker. Pass navigatorKey to VibeBugScope.');
       return;
     }
 
@@ -191,7 +195,8 @@ class _VibeBugCaptureOverlayState extends State<VibeBugCaptureOverlay> {
     setState(() => _capturing = false);
 
     if (full == null || full.fullDataUrl.isEmpty) {
-      _showSnack('Screenshot capture failed. Try again after the screen settles.');
+      _showSnack(
+          'Screenshot capture failed. Try again after the screen settles.');
       return;
     }
 
@@ -227,7 +232,9 @@ class _VibeBugCaptureOverlayState extends State<VibeBugCaptureOverlay> {
           description: editorResult.description,
           selectedScreenshotDataUrl: editorResult.selectedScreenshotDataUrl,
           fullScreenshotDataUrl: editorResult.fullScreenshotDataUrl,
-          pageUrl: hit.routeName.isNotEmpty ? 'flutter://${hit.routeName}' : 'flutter://screen',
+          pageUrl: hit.routeName.isNotEmpty
+              ? 'flutter://${hit.routeName}'
+              : 'flutter://screen',
           cssSelector: hit.selector,
           domText: hit.semanticsLabel,
           htmlSnippet: hit.widgetSnippet,
@@ -293,24 +300,31 @@ class _VibeBugCaptureOverlayState extends State<VibeBugCaptureOverlay> {
       ..addAll(result.shots));
 
     if (result.send && result.summary.trim().length >= 3) {
-      await _submitIssue(result.summary.trim(), result.shots);
+      await _submitIssue(result.summary.trim(), result.shots, result);
     }
   }
 
-  Future<void> _submitIssue(String summary, List<VibeBugScreenshotShot> shots) async {
+  Future<void> _submitIssue(String summary, List<VibeBugScreenshotShot> shots,
+      _SubmitSheetResult target) async {
     if (shots.isEmpty) return;
     setState(() => _submitting = true);
     try {
       final issueId = await VibeBug.reportIssueWithCaptures(
         summary: summary,
         captures: shots,
+        priority: target.priority,
+        projectId: target.projectId,
+        boardId: target.boardId,
+        assignedTo: target.assignedTo,
       );
       if (!mounted) return;
       setState(() {
         _draftShots.clear();
         _submitting = false;
       });
-      _showSnack(issueId == null ? 'Issue queued for retry.' : 'Issue sent ($issueId).');
+      _showSnack(issueId == null
+          ? 'Issue queued for retry.'
+          : 'Issue sent ($issueId).');
     } catch (e) {
       if (mounted) setState(() => _submitting = false);
       _showSnack('Failed to send issue: $e');
@@ -320,7 +334,8 @@ class _VibeBugCaptureOverlayState extends State<VibeBugCaptureOverlay> {
   void _showSnack(String message) {
     final navContext = _navContext;
     if (navContext == null || !navContext.mounted) return;
-    ScaffoldMessenger.of(navContext).showSnackBar(SnackBar(content: Text(message)));
+    ScaffoldMessenger.of(navContext)
+        .showSnackBar(SnackBar(content: Text(message)));
   }
 
   Rect? _highlightRectInOverlay(RenderBox overlayBox) {
@@ -348,15 +363,18 @@ class _VibeBugCaptureOverlayState extends State<VibeBugCaptureOverlay> {
             Listener(
               behavior: HitTestBehavior.translucent,
               onPointerDown: (event) {
-                final global = overlayBox?.localToGlobal(event.position) ?? event.position;
+                final global =
+                    overlayBox?.localToGlobal(event.position) ?? event.position;
                 _updateHover(global);
               },
               onPointerMove: (event) {
-                final global = overlayBox?.localToGlobal(event.position) ?? event.position;
+                final global =
+                    overlayBox?.localToGlobal(event.position) ?? event.position;
                 _updateHover(global);
               },
               onPointerUp: (event) {
-                final global = overlayBox?.localToGlobal(event.position) ?? event.position;
+                final global =
+                    overlayBox?.localToGlobal(event.position) ?? event.position;
                 unawaited(_captureAt(global));
               },
             ),
@@ -382,7 +400,8 @@ class _VibeBugCaptureOverlayState extends State<VibeBugCaptureOverlay> {
                 elevation: 4,
                 borderRadius: BorderRadius.circular(12),
                 child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
                   child: Row(
                     children: [
                       Expanded(
@@ -392,7 +411,8 @@ class _VibeBugCaptureOverlayState extends State<VibeBugCaptureOverlay> {
                               : 'Tap widget (${_draftShots.length}/$_maxCaptures captured)',
                         ),
                       ),
-                      TextButton(onPressed: _stopPicking, child: const Text('Cancel')),
+                      TextButton(
+                          onPressed: _stopPicking, child: const Text('Cancel')),
                     ],
                   ),
                 ),
@@ -445,11 +465,19 @@ class _SubmitSheetResult {
     required this.shots,
     required this.summary,
     required this.send,
+    this.projectId,
+    this.boardId,
+    this.assignedTo,
+    this.priority = 'medium',
   });
 
   final List<VibeBugScreenshotShot> shots;
   final String summary;
   final bool send;
+  final String? projectId;
+  final String? boardId;
+  final String? assignedTo;
+  final String priority;
 }
 
 class _SubmitIssueSheet extends StatefulWidget {
@@ -468,7 +496,18 @@ class _SubmitIssueSheet extends StatefulWidget {
 class _SubmitIssueSheetState extends State<_SubmitIssueSheet> {
   late List<VibeBugScreenshotShot> _shots;
   late final TextEditingController _summaryController;
+  late final TextEditingController _emailController;
+  late final TextEditingController _passwordController;
   final Map<String, TextEditingController> _descControllers = {};
+  List<VibeBugProject> _projects = const [];
+  List<VibeBugBoard> _boards = const [];
+  List<VibeBugDeveloper> _developers = const [];
+  String? _projectId;
+  String? _boardId;
+  String? _developerId;
+  String _priority = 'medium';
+  bool _loadingTarget = false;
+  bool _signingIn = false;
   String? _error;
 
   @override
@@ -478,14 +517,19 @@ class _SubmitIssueSheetState extends State<_SubmitIssueSheet> {
     _summaryController = TextEditingController(
       text: _shots.isNotEmpty ? _shots.first.description : '',
     );
+    _emailController = TextEditingController();
+    _passwordController = TextEditingController();
     for (final shot in _shots) {
       _descControllers[shot.id] = TextEditingController(text: shot.description);
     }
+    _hydrateTargetOptions();
   }
 
   @override
   void dispose() {
     _summaryController.dispose();
+    _emailController.dispose();
+    _passwordController.dispose();
     for (final c in _descControllers.values) {
       c.dispose();
     }
@@ -498,7 +542,8 @@ class _SubmitIssueSheetState extends State<_SubmitIssueSheet> {
     setState(() {
       _shots.removeWhere((s) => s.id == id);
       if (_shots.isEmpty) {
-        Navigator.of(context).pop(const _SubmitSheetResult(shots: [], summary: '', send: false));
+        Navigator.of(context)
+            .pop(const _SubmitSheetResult(shots: [], summary: '', send: false));
       }
     });
   }
@@ -562,10 +607,109 @@ class _SubmitIssueSheetState extends State<_SubmitIssueSheet> {
         return;
       }
     }
+    if (_projectId == null || _projectId!.isEmpty) {
+      setState(() => _error = VibeBug.isAuthenticated
+          ? 'Select a tester project.'
+          : 'Sign in before sending an issue.');
+      return;
+    }
+    if (_boardId == null || _boardId!.isEmpty) {
+      setState(() => _error = 'Select a board for this issue.');
+      return;
+    }
+    if (_developerId == null || _developerId!.isEmpty) {
+      setState(() => _error = 'Select a developer for this issue.');
+      return;
+    }
 
     Navigator.of(context).pop(
-      _SubmitSheetResult(shots: collected, summary: summary, send: true),
+      _SubmitSheetResult(
+        shots: collected,
+        summary: summary,
+        send: true,
+        projectId: _projectId,
+        boardId: _boardId,
+        assignedTo: _developerId,
+        priority: _priority,
+      ),
     );
+  }
+
+  Future<void> _hydrateTargetOptions() async {
+    setState(() {
+      _projects = VibeBug.projects
+          .where((project) => project.role == 'tester')
+          .toList();
+      if (_projects.isEmpty) _projects = VibeBug.projects;
+      _projectId = VibeBug.selectedProjectId ??
+          (_projects.isNotEmpty ? _projects.first.id : null);
+      _boards = VibeBug.boards;
+      _developers = VibeBug.developers;
+      _boardId = VibeBug.selectedBoardId ??
+          (_boards.isNotEmpty ? _boards.first.id : null);
+      _developerId = VibeBug.selectedDeveloperId ??
+          (_developers.isNotEmpty ? _developers.first.id : null);
+    });
+    if (_projectId != null &&
+        _projects.any((project) => project.id == _projectId)) {
+      await _changeProject(_projectId!, showLoading: false);
+    }
+  }
+
+  Future<void> _signIn() async {
+    final email = _emailController.text.trim();
+    final password = _passwordController.text;
+    if (email.isEmpty || password.isEmpty) {
+      setState(() => _error = 'Enter tester email and password.');
+      return;
+    }
+    setState(() {
+      _signingIn = true;
+      _error = null;
+    });
+    try {
+      await VibeBug.signIn(email: email, password: password);
+      if (!mounted) return;
+      setState(() => _signingIn = false);
+      await _hydrateTargetOptions();
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _signingIn = false;
+        _error = 'Sign in failed: $e';
+      });
+    }
+  }
+
+  Future<void> _changeProject(String projectId,
+      {bool showLoading = true}) async {
+    if (showLoading) {
+      setState(() {
+        _loadingTarget = true;
+        _error = null;
+        _projectId = projectId;
+      });
+    }
+    try {
+      await VibeBug.selectProject(projectId);
+      if (!mounted) return;
+      setState(() {
+        _projectId = projectId;
+        _boards = VibeBug.boards;
+        _developers = VibeBug.developers;
+        _boardId = VibeBug.selectedBoardId ??
+            (_boards.isNotEmpty ? _boards.first.id : null);
+        _developerId = VibeBug.selectedDeveloperId ??
+            (_developers.isNotEmpty ? _developers.first.id : null);
+        _loadingTarget = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _loadingTarget = false;
+        _error = 'Could not load project options: $e';
+      });
+    }
   }
 
   @override
@@ -586,11 +730,19 @@ class _SubmitIssueSheetState extends State<_SubmitIssueSheet> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              Text('Send issue (${_shots.length} captures)', style: Theme.of(ctx).textTheme.titleLarge),
+              Text('Send issue (${_shots.length} captures)',
+                  style: Theme.of(ctx).textTheme.titleLarge),
               if (_error != null) ...[
                 const SizedBox(height: 8),
-                Text(_error!, style: TextStyle(color: Theme.of(ctx).colorScheme.error, fontSize: 13)),
+                Text(_error!,
+                    style: TextStyle(
+                        color: Theme.of(ctx).colorScheme.error, fontSize: 13)),
               ],
+              const SizedBox(height: 12),
+              if (VibeBug.isAuthenticated)
+                _buildTargetControls(ctx)
+              else
+                _buildSignInControls(ctx),
               const SizedBox(height: 12),
               Expanded(
                 child: ListView.separated(
@@ -603,7 +755,8 @@ class _SubmitIssueSheetState extends State<_SubmitIssueSheet> {
                       index: index,
                       shot: shot,
                       descController: _descControllers[shot.id]!,
-                      onDescriptionChanged: (text) => _updateShotDescription(shot.id, text),
+                      onDescriptionChanged: (text) =>
+                          _updateShotDescription(shot.id, text),
                       onRemove: () => _removeShot(shot.id),
                     );
                   },
@@ -620,13 +773,173 @@ class _SubmitIssueSheetState extends State<_SubmitIssueSheet> {
               ),
               const SizedBox(height: 12),
               FilledButton(
-                onPressed: widget.submitting ? null : _trySend,
-                child: Text(widget.submitting ? 'Sending…' : 'Send to developer'),
+                onPressed: widget.submitting ||
+                        _loadingTarget ||
+                        _signingIn ||
+                        !VibeBug.isAuthenticated
+                    ? null
+                    : _trySend,
+                child:
+                    Text(widget.submitting ? 'Sending…' : 'Send to developer'),
               ),
             ],
           ),
         );
       },
+    );
+  }
+
+  Widget _buildTargetControls(BuildContext context) {
+    const decoration = InputDecoration(
+      border: OutlineInputBorder(),
+      isDense: true,
+    );
+
+    return Column(
+      children: [
+        Row(
+          children: [
+            Expanded(
+              child: DropdownButtonFormField<String>(
+                key: ValueKey('project-$_projectId-${_projects.length}'),
+                initialValue:
+                    _projects.any((project) => project.id == _projectId)
+                        ? _projectId
+                        : null,
+                items: _projects
+                    .map((project) => DropdownMenuItem(
+                          value: project.id,
+                          child: Text(project.name,
+                              overflow: TextOverflow.ellipsis),
+                        ))
+                    .toList(),
+                onChanged: _loadingTarget
+                    ? null
+                    : (value) {
+                        if (value != null) unawaited(_changeProject(value));
+                      },
+                decoration: decoration.copyWith(labelText: 'Project'),
+              ),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: DropdownButtonFormField<String>(
+                key: ValueKey('board-$_projectId-$_boardId-${_boards.length}'),
+                initialValue: _boards.any((board) => board.id == _boardId)
+                    ? _boardId
+                    : null,
+                items: _boards
+                    .map((board) => DropdownMenuItem(
+                          value: board.id,
+                          child: Text(
+                            board.cardCount > 0
+                                ? '${board.name} (${board.cardCount})'
+                                : board.name,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ))
+                    .toList(),
+                onChanged: _loadingTarget
+                    ? null
+                    : (value) => setState(() {
+                          _boardId = value;
+                          if (value != null) VibeBug.selectBoard(value);
+                        }),
+                decoration: decoration.copyWith(labelText: 'Board'),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 8),
+        Row(
+          children: [
+            Expanded(
+              child: DropdownButtonFormField<String>(
+                key: ValueKey(
+                    'developer-$_projectId-$_developerId-${_developers.length}'),
+                initialValue:
+                    _developers.any((developer) => developer.id == _developerId)
+                        ? _developerId
+                        : null,
+                items: _developers
+                    .map((developer) => DropdownMenuItem(
+                          value: developer.id,
+                          child: Text(developer.name,
+                              overflow: TextOverflow.ellipsis),
+                        ))
+                    .toList(),
+                onChanged: _loadingTarget
+                    ? null
+                    : (value) => setState(() {
+                          _developerId = value;
+                          if (value != null) VibeBug.selectDeveloper(value);
+                        }),
+                decoration: decoration.copyWith(labelText: 'Developer'),
+              ),
+            ),
+            const SizedBox(width: 8),
+            SizedBox(
+              width: 136,
+              child: DropdownButtonFormField<String>(
+                key: ValueKey('priority-$_priority'),
+                initialValue: _priority,
+                items: const [
+                  DropdownMenuItem(value: 'low', child: Text('Low')),
+                  DropdownMenuItem(value: 'medium', child: Text('Medium')),
+                  DropdownMenuItem(value: 'high', child: Text('High')),
+                  DropdownMenuItem(
+                      value: 'immediate', child: Text('Immediate')),
+                ],
+                onChanged: _loadingTarget
+                    ? null
+                    : (value) => setState(() => _priority = value ?? 'medium'),
+                decoration: decoration.copyWith(labelText: 'Priority'),
+              ),
+            ),
+          ],
+        ),
+        if (_loadingTarget) ...[
+          const SizedBox(height: 8),
+          const LinearProgressIndicator(minHeight: 2),
+        ],
+      ],
+    );
+  }
+
+  Widget _buildSignInControls(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        TextField(
+          controller: _emailController,
+          keyboardType: TextInputType.emailAddress,
+          textInputAction: TextInputAction.next,
+          decoration: const InputDecoration(
+            labelText: 'Tester email',
+            border: OutlineInputBorder(),
+            isDense: true,
+          ),
+        ),
+        const SizedBox(height: 8),
+        TextField(
+          controller: _passwordController,
+          obscureText: true,
+          textInputAction: TextInputAction.done,
+          onSubmitted: (_) {
+            if (!_signingIn) unawaited(_signIn());
+          },
+          decoration: const InputDecoration(
+            labelText: 'Password',
+            border: OutlineInputBorder(),
+            isDense: true,
+          ),
+        ),
+        const SizedBox(height: 8),
+        FilledButton(
+          onPressed: _signingIn ? null : () => unawaited(_signIn()),
+          child: Text(_signingIn ? 'Signing in...' : 'Sign in'),
+        ),
+      ],
     );
   }
 }
@@ -656,7 +969,8 @@ class _DraftShotCard extends StatelessWidget {
           children: [
             Row(
               children: [
-                Text('Screenshot ${index + 1}', style: Theme.of(context).textTheme.titleSmall),
+                Text('Screenshot ${index + 1}',
+                    style: Theme.of(context).textTheme.titleSmall),
                 const Spacer(),
                 IconButton(
                   visualDensity: VisualDensity.compact,
@@ -672,11 +986,14 @@ class _DraftShotCard extends StatelessWidget {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text('Selected', style: Theme.of(context).textTheme.labelSmall),
+                      Text('Selected',
+                          style: Theme.of(context).textTheme.labelSmall),
                       const SizedBox(height: 4),
                       ClipRRect(
                         borderRadius: BorderRadius.circular(8),
-                        child: _CaptureThumbnail(dataUrl: shot.selectedScreenshotDataUrl, height: 72),
+                        child: _CaptureThumbnail(
+                            dataUrl: shot.selectedScreenshotDataUrl,
+                            height: 72),
                       ),
                     ],
                   ),
@@ -686,11 +1003,13 @@ class _DraftShotCard extends StatelessWidget {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text('Full context', style: Theme.of(context).textTheme.labelSmall),
+                      Text('Full context',
+                          style: Theme.of(context).textTheme.labelSmall),
                       const SizedBox(height: 4),
                       ClipRRect(
                         borderRadius: BorderRadius.circular(8),
-                        child: _CaptureThumbnail(dataUrl: shot.fullScreenshotDataUrl, height: 72),
+                        child: _CaptureThumbnail(
+                            dataUrl: shot.fullScreenshotDataUrl, height: 72),
                       ),
                     ],
                   ),
@@ -709,7 +1028,10 @@ class _DraftShotCard extends StatelessWidget {
               shot.cssSelector,
               maxLines: 2,
               overflow: TextOverflow.ellipsis,
-              style: Theme.of(context).textTheme.bodySmall?.copyWith(fontFamily: 'monospace'),
+              style: Theme.of(context)
+                  .textTheme
+                  .bodySmall
+                  ?.copyWith(fontFamily: 'monospace'),
             ),
             const SizedBox(height: 8),
             TextField(
@@ -807,7 +1129,8 @@ class _DraggableReportBubbleState extends State<_DraggableReportBubble> {
                   _dragging = false;
                   _longPressFired = false;
                   _longPressTimer?.cancel();
-                  _longPressTimer = Timer(const Duration(milliseconds: 500), () {
+                  _longPressTimer =
+                      Timer(const Duration(milliseconds: 500), () {
                     if (_activePointer != null && !_dragging) {
                       _longPressFired = true;
                       widget.onLongPress();
@@ -815,16 +1138,21 @@ class _DraggableReportBubbleState extends State<_DraggableReportBubble> {
                   });
                 },
                 onPointerMove: (event) {
-                  if (event.pointer != _activePointer || _dragOrigin == null) return;
+                  if (event.pointer != _activePointer || _dragOrigin == null) {
+                    return;
+                  }
                   _panTotal += event.delta;
-                  if (!_dragging && _panTotal.distance < _bubbleDragSlop) return;
+                  if (!_dragging && _panTotal.distance < _bubbleDragSlop) {
+                    return;
+                  }
                   if (!_dragging) {
                     _longPressTimer?.cancel();
                     _dragging = true;
                   }
                   final next = Offset(
                     (_dragOrigin!.dx + _panTotal.dx).clamp(8.0, maxX),
-                    (_dragOrigin!.dy + _panTotal.dy).clamp(padding.top + 8, maxY),
+                    (_dragOrigin!.dy + _panTotal.dy)
+                        .clamp(padding.top + 8, maxY),
                   );
                   _lastDragOffset = next;
                   widget.onOffsetChanged(next);
@@ -849,9 +1177,12 @@ class _DraggableReportBubbleState extends State<_DraggableReportBubble> {
                 child: const Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    Icon(Icons.bug_report_outlined, color: Color(0xFFBEF264), size: 18),
+                    Icon(Icons.bug_report_outlined,
+                        color: Color(0xFFBEF264), size: 18),
                     SizedBox(width: 8),
-                    Text('Report', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w600)),
+                    Text('Report',
+                        style: TextStyle(
+                            color: Colors.white, fontWeight: FontWeight.w600)),
                   ],
                 ),
               ),
@@ -865,7 +1196,10 @@ class _DraggableReportBubbleState extends State<_DraggableReportBubble> {
                     backgroundColor: const Color(0xFFBEF264),
                     child: Text(
                       '${widget.draftCount}',
-                      style: const TextStyle(fontSize: 11, color: Colors.black, fontWeight: FontWeight.bold),
+                      style: const TextStyle(
+                          fontSize: 11,
+                          color: Colors.black,
+                          fontWeight: FontWeight.bold),
                     ),
                   ),
                 ),

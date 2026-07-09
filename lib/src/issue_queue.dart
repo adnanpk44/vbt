@@ -12,6 +12,9 @@ class PendingIssueReport {
     required this.createdAt,
     this.pageUrl,
     this.cssSelector,
+    this.projectId,
+    this.boardId,
+    this.assignedTo,
     this.screenshotDataUrl,
     this.screenshots = const [],
     this.isFatal = true,
@@ -24,6 +27,9 @@ class PendingIssueReport {
   final DateTime createdAt;
   final String? pageUrl;
   final String? cssSelector;
+  final String? projectId;
+  final String? boardId;
+  final String? assignedTo;
   final String? screenshotDataUrl;
   final List<Map<String, dynamic>> screenshots;
   final bool isFatal;
@@ -36,12 +42,16 @@ class PendingIssueReport {
         'createdAt': createdAt.toIso8601String(),
         'pageUrl': pageUrl,
         'cssSelector': cssSelector,
+        'projectId': projectId,
+        'boardId': boardId,
+        'assignedTo': assignedTo,
         'screenshotDataUrl': screenshotDataUrl,
         'screenshots': screenshots,
         'isFatal': isFatal,
       };
 
-  factory PendingIssueReport.fromJson(Map<String, dynamic> json) => PendingIssueReport(
+  factory PendingIssueReport.fromJson(Map<String, dynamic> json) =>
+      PendingIssueReport(
         id: json['id'] as String,
         description: json['description'] as String,
         priority: json['priority'] as String? ?? 'high',
@@ -49,6 +59,9 @@ class PendingIssueReport {
         createdAt: DateTime.parse(json['createdAt'] as String),
         pageUrl: json['pageUrl'] as String?,
         cssSelector: json['cssSelector'] as String?,
+        projectId: json['projectId'] as String?,
+        boardId: json['boardId'] as String?,
+        assignedTo: json['assignedTo'] as String?,
         screenshotDataUrl: json['screenshotDataUrl'] as String?,
         screenshots: (json['screenshots'] as List<dynamic>? ?? [])
             .map((item) => Map<String, dynamic>.from(item as Map))
@@ -70,11 +83,13 @@ class IssueQueue {
     final raw = _prefs.getString(_queueKey);
     if (raw == null) return [];
     final list = jsonDecode(raw) as List<dynamic>;
-    return list.map((e) => PendingIssueReport.fromJson(e as Map<String, dynamic>)).toList();
+    return list
+        .map((e) => PendingIssueReport.fromJson(e as Map<String, dynamic>))
+        .toList();
   }
 
-  Future<void> saveAll(List<PendingIssueReport> items) =>
-      _prefs.setString(_queueKey, jsonEncode(items.map((e) => e.toJson()).toList()));
+  Future<void> saveAll(List<PendingIssueReport> items) => _prefs.setString(
+      _queueKey, jsonEncode(items.map((e) => e.toJson()).toList()));
 
   Future<PendingIssueReport> enqueue({
     required String description,
@@ -82,6 +97,9 @@ class IssueQueue {
     required String fingerprint,
     String? pageUrl,
     String? cssSelector,
+    String? projectId,
+    String? boardId,
+    String? assignedTo,
     String? screenshotDataUrl,
     List<Map<String, dynamic>> screenshots = const [],
     bool isFatal = true,
@@ -95,6 +113,9 @@ class IssueQueue {
       createdAt: DateTime.now(),
       pageUrl: pageUrl,
       cssSelector: cssSelector,
+      projectId: projectId,
+      boardId: boardId,
+      assignedTo: assignedTo,
       screenshotDataUrl: screenshotDataUrl,
       screenshots: screenshots,
       isFatal: isFatal,
@@ -124,7 +145,8 @@ class IssueQueue {
     final raw = _prefs.getString(_recentKey);
     final map = raw == null
         ? <String, String>{}
-        : (jsonDecode(raw) as Map<String, dynamic>).map((k, v) => MapEntry(k, v as String));
+        : (jsonDecode(raw) as Map<String, dynamic>)
+            .map((k, v) => MapEntry(k, v as String));
     map[fingerprint] = DateTime.now().toIso8601String();
     // Keep only last 50 fingerprints
     final entries = map.entries.toList()

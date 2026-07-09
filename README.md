@@ -29,9 +29,6 @@ Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
   await VibeBug.initialize(VibeBugOptions(
-    projectId: 'proj_your_project_id',
-    email: 'tester@example.com',
-    password: 'your-password',
     onIssueSent: (issueId) => debugPrint('Reported $issueId'),
   ));
 
@@ -60,7 +57,8 @@ VibeBugScope(
 2. **Tap** the bubble → tap a widget to capture it
 3. **Crop / highlight** in the full-screen editor, add a per-capture note, then **Save**
 4. Navigate to other screens freely, tap **Report** again to add more (up to 8)
-5. Tap the **badge** on the bubble → review selected + full screenshots per capture → **Send**
+5. Tap the **badge** on the bubble, then sign in with the tester account if needed
+6. Select the project, board, developer, and priority for this issue, then **Send**
 
 Long-press the bubble to clear draft captures.
 

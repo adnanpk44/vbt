@@ -27,8 +27,12 @@ class VibeBug {
   static VibeBugApiClient? _api;
   static IssueQueue? _queue;
   static String? _token;
+  static String? _projectId;
   static String? _boardId;
   static String? _assignedTo;
+  static List<VibeBugProject> _projects = const [];
+  static List<VibeBugBoard> _boards = const [];
+  static List<VibeBugDeveloper> _developers = const [];
   static bool _initialized = false;
   static FlutterErrorDetails? _lastFlutterError;
   static final _uuid = const Uuid();
@@ -36,6 +40,14 @@ class VibeBug {
   static const _tokenKey = 'vibebug_sdk_token';
 
   static bool get isInitialized => _initialized;
+  static bool get isAuthenticated => _token != null;
+  static String? get selectedProjectId => _projectId;
+  static String? get selectedBoardId => _boardId;
+  static String? get selectedDeveloperId => _assignedTo;
+  static List<VibeBugProject> get projects => List.unmodifiable(_projects);
+  static List<VibeBugBoard> get boards => List.unmodifiable(_boards);
+  static List<VibeBugDeveloper> get developers =>
+      List.unmodifiable(_developers);
 
   /// Initialize the SDK. Call before [runGuarded] or [runApp].
   static Future<void> initialize(VibeBugOptions options) async {
@@ -49,19 +61,58 @@ class VibeBug {
     } else {
       _token = await _secure.read(key: _tokenKey);
       if (_token == null && options.email != null && options.password != null) {
-        _token = await _api!.login(email: options.email!, password: options.password!);
+        _token = await _api!
+            .login(email: options.email!, password: options.password!);
         await _secure.write(key: _tokenKey, value: _token);
       }
     }
 
-    await _resolveDefaults();
-    await flushPendingReports();
+    if (_token != null) {
+      await _loadProjectsAndDefaults();
+      await flushPendingReports();
+    }
 
     if (options.autoReportCrashes) {
       _installErrorHandlers();
     }
 
     _initialized = true;
+  }
+
+  /// Signs in a tester/developer account after SDK initialization.
+  static Future<void> signIn({
+    required String email,
+    required String password,
+  }) async {
+    if (_api == null || _queue == null) {
+      throw VibeBugException('VibeBug.initialize() must be called first.');
+    }
+    _token = await _api!.login(email: email, password: password);
+    await _secure.write(key: _tokenKey, value: _token);
+    _projectId = null;
+    _boardId = null;
+    _assignedTo = null;
+    await _loadProjectsAndDefaults();
+    await flushPendingReports();
+  }
+
+  /// Changes the active target used by crash reports and default issue submits.
+  ///
+  /// Manual visual reports can still override board/developer per issue.
+  static Future<void> selectProject(String projectId) async {
+    await _ensureAuth();
+    _projectId = projectId;
+    _boardId = null;
+    _assignedTo = null;
+    await _loadProjectOptions(projectId);
+  }
+
+  static void selectBoard(String boardId) {
+    _boardId = boardId;
+  }
+
+  static void selectDeveloper(String developerId) {
+    _assignedTo = developerId;
   }
 
   /// Wrap [runApp] to catch async zone errors.
@@ -110,6 +161,9 @@ class VibeBug {
   static Future<String?> reportIssue({
     required String description,
     String priority = 'medium',
+    String? projectId,
+    String? boardId,
+    String? assignedTo,
     String? pageUrl,
     String? widgetKey,
     String? screenshotDataUrl,
@@ -117,6 +171,9 @@ class VibeBug {
     return _sendOrQueue(
       description: description,
       priority: priority,
+      projectId: projectId ?? _projectId,
+      boardId: boardId ?? _boardId,
+      assignedTo: assignedTo ?? _assignedTo,
       pageUrl: pageUrl,
       cssSelector: widgetKey,
       fingerprint: _fingerprint(description, StackTrace.current),
@@ -131,6 +188,9 @@ class VibeBug {
     required String summary,
     required List<VibeBugScreenshotShot> captures,
     String priority = 'medium',
+    String? projectId,
+    String? boardId,
+    String? assignedTo,
     String? routeName,
   }) {
     if (captures.isEmpty) {
@@ -144,6 +204,9 @@ class VibeBug {
     return _sendOrQueue(
       description: markdown,
       priority: priority,
+      projectId: projectId,
+      boardId: boardId,
+      assignedTo: assignedTo,
       pageUrl: captures.first.pageUrl,
       cssSelector: captures.first.cssSelector,
       fingerprint: _fingerprint(summary, StackTrace.current),
@@ -175,7 +238,8 @@ class VibeBug {
     FlutterError.onError = (details) {
       _lastFlutterError = details;
       previousFlutterHandler?.call(details);
-      _handleUncaught(details.exception, details.stack ?? StackTrace.current, fatal: true);
+      _handleUncaught(details.exception, details.stack ?? StackTrace.current,
+          fatal: true);
     };
 
     final platformDispatcher = PlatformDispatcher.instance;
@@ -186,8 +250,11 @@ class VibeBug {
     };
   }
 
-  static void _handleUncaught(Object error, StackTrace stack, {required bool fatal}) {
-    if (!_initialized || _options == null || !_options!.autoReportCrashes) return;
+  static void _handleUncaught(Object error, StackTrace stack,
+      {required bool fatal}) {
+    if (!_initialized || _options == null || !_options!.autoReportCrashes) {
+      return;
+    }
 
     final fingerprint = _fingerprint(error, stack);
     if (_queue!.wasRecentlySent(fingerprint, _options!.dedupeWindow)) return;
@@ -221,7 +288,8 @@ class VibeBug {
       ..writeln(fatal ? '[CRASH] $title' : '[Exception] $title')
       ..writeln()
       ..writeln('Type: ${error.runtimeType}')
-      ..writeln('Platform: ${Platform.operatingSystem} ${Platform.operatingSystemVersion}')
+      ..writeln(
+          'Platform: ${Platform.operatingSystem} ${Platform.operatingSystemVersion}')
       ..writeln('Flutter: $fatal')
       ..writeln()
       ..writeln('Stack trace:')
@@ -232,15 +300,23 @@ class VibeBug {
         ..writeln()
         ..writeln('Context: ${flutterDetails.context}')
         ..writeln('Library: ${flutterDetails.library}')
-        ..writeln('Information: ${flutterDetails.informationCollector?.call()}');
+        ..writeln(
+            'Information: ${flutterDetails.informationCollector?.call()}');
     }
 
     return buffer.toString().trim();
   }
 
   static String _fingerprint(Object error, StackTrace stack) {
-    final lines = stack.toString().split('\n').where((l) => l.trim().isNotEmpty).take(3).join('|');
-    return base64Url.encode(utf8.encode('${error.runtimeType}:$lines')).substring(0, 24);
+    final lines = stack
+        .toString()
+        .split('\n')
+        .where((l) => l.trim().isNotEmpty)
+        .take(3)
+        .join('|');
+    return base64Url
+        .encode(utf8.encode('${error.runtimeType}:$lines'))
+        .substring(0, 24);
   }
 
   static Future<String?> _sendOrQueue({
@@ -249,6 +325,9 @@ class VibeBug {
     required String fingerprint,
     required bool isFatal,
     required bool captureScreenshot,
+    String? projectId,
+    String? boardId,
+    String? assignedTo,
     String? pageUrl,
     String? cssSelector,
     String? screenshotDataUrl,
@@ -263,7 +342,9 @@ class VibeBug {
     }
 
     String? screenshot = screenshotDataUrl;
-    if (screenshot == null && captureScreenshot && _options!.screenshotProvider != null) {
+    if (screenshot == null &&
+        captureScreenshot &&
+        _options!.screenshotProvider != null) {
       try {
         screenshot = await _options!.screenshotProvider!();
       } catch (_) {}
@@ -273,6 +354,9 @@ class VibeBug {
       description: description,
       priority: priority,
       fingerprint: fingerprint,
+      projectId: projectId,
+      boardId: boardId,
+      assignedTo: assignedTo,
       pageUrl: pageUrl,
       cssSelector: cssSelector,
       screenshotDataUrl: screenshot,
@@ -298,15 +382,22 @@ class VibeBug {
 
   static Future<String> _submitReport(PendingIssueReport report) async {
     await _ensureAuth();
-    await _resolveDefaults();
+    final target = await _resolveTarget(
+      projectId: report.projectId,
+      boardId: report.boardId,
+      assignedTo: report.assignedTo,
+    );
 
     final screenshots = <Map<String, dynamic>>[];
     if (report.screenshots.isNotEmpty) {
       screenshots.addAll(report.screenshots);
-    } else if (report.screenshotDataUrl != null && report.screenshotDataUrl!.isNotEmpty) {
+    } else if (report.screenshotDataUrl != null &&
+        report.screenshotDataUrl!.isNotEmpty) {
       screenshots.add({
         'id': _uuid.v4(),
-        'description': report.description.length > 200 ? report.description.substring(0, 200) : report.description,
+        'description': report.description.length > 200
+            ? report.description.substring(0, 200)
+            : report.description,
         'selectedScreenshotDataUrl': report.screenshotDataUrl,
         'fullScreenshotDataUrl': report.screenshotDataUrl,
         'screenshotDataUrl': report.screenshotDataUrl,
@@ -318,14 +409,15 @@ class VibeBug {
 
     return _api!.createIssue(
       _token!,
-      projectId: _options!.projectId,
-      boardId: _boardId!,
+      projectId: target.projectId,
+      boardId: target.boardId,
       description: report.description,
       priority: report.priority,
-      assignedTo: _assignedTo!,
+      assignedTo: target.assignedTo,
       pageUrl: report.pageUrl,
       cssSelector: report.cssSelector,
-      userAgent: '${Platform.operatingSystem} ${Platform.operatingSystemVersion}',
+      userAgent:
+          '${Platform.operatingSystem} ${Platform.operatingSystemVersion}',
       browserName: 'Flutter',
       screenshots: screenshots,
     );
@@ -337,34 +429,106 @@ class VibeBug {
     if (options.email == null || options.password == null) {
       throw VibeBugException('No auth token. Provide token or email/password.');
     }
-    _token = await _api!.login(email: options.email!, password: options.password!);
+    _token =
+        await _api!.login(email: options.email!, password: options.password!);
     await _secure.write(key: _tokenKey, value: _token);
   }
 
-  static Future<void> _resolveDefaults() async {
+  static Future<void> _loadProjectsAndDefaults() async {
     final options = _options!;
     if (_token == null) await _ensureAuth();
 
-    if (_boardId == null) {
-      if (options.boardId != null) {
-        _boardId = options.boardId;
-      } else {
-        final boards = await _api!.loadBoards(_token!, options.projectId);
-        if (boards.isEmpty) throw VibeBugException('No board found for project.');
-        _boardId = boards.first['id'] as String;
-      }
+    _projects = await _api!.loadProjects(_token!);
+    final testerProjects =
+        _projects.where((project) => project.role == 'tester').toList();
+    final available = testerProjects.isNotEmpty ? testerProjects : _projects;
+    if (available.isEmpty) {
+      throw VibeBugException(
+          'No tester or developer projects are assigned to this account.');
     }
 
-    if (_assignedTo == null) {
-      if (options.assignedTo != null) {
-        _assignedTo = options.assignedTo;
-      } else {
-        final developers = await _api!.loadDevelopers(_token!, options.projectId);
-        if (developers.isEmpty) throw VibeBugException('No active developer found for project.');
-        _assignedTo = developers.first['id'] as String;
-      }
+    _projectId = options.projectId != null &&
+            available.any((project) => project.id == options.projectId)
+        ? options.projectId
+        : available.first.id;
+    await _loadProjectOptions(_projectId!);
+
+    if (options.boardId != null &&
+        _boards.any((board) => board.id == options.boardId)) {
+      _boardId = options.boardId;
+    }
+    if (options.assignedTo != null &&
+        _developers.any((developer) => developer.id == options.assignedTo)) {
+      _assignedTo = options.assignedTo;
     }
   }
+
+  static Future<void> _loadProjectOptions(String projectId) async {
+    _boards = (await _api!.loadBoards(_token!, projectId))
+        .where((board) => board.status != 'archived')
+        .toList();
+    _developers = await _api!.loadDevelopers(_token!, projectId);
+    _boardId = _defaultBoardId(projectId, _boards);
+    _assignedTo = _developers.isNotEmpty ? _developers.first.id : null;
+  }
+
+  static String? _defaultBoardId(String projectId, List<VibeBugBoard> boards) {
+    if (boards.isEmpty) return null;
+    final main = boards.where((board) =>
+        board.id == 'brd_${projectId}_main' || board.id.endsWith('_main'));
+    if (main.isNotEmpty) return main.first.id;
+    final starred = boards.where((board) => board.starred);
+    if (starred.isNotEmpty) return starred.first.id;
+    return boards.first.id;
+  }
+
+  static Future<_IssueTarget> _resolveTarget({
+    String? projectId,
+    String? boardId,
+    String? assignedTo,
+  }) async {
+    if (_projectId == null) await _loadProjectsAndDefaults();
+    final resolvedProject = projectId ?? _projectId;
+    if (resolvedProject == null || resolvedProject.isEmpty) {
+      throw VibeBugException(
+          'Select a tester project before sending an issue.');
+    }
+
+    if (resolvedProject != _projectId ||
+        _boards.isEmpty ||
+        _developers.isEmpty) {
+      _projectId = resolvedProject;
+      await _loadProjectOptions(resolvedProject);
+    }
+
+    final resolvedBoard = boardId ?? _boardId;
+    if (resolvedBoard == null || resolvedBoard.isEmpty) {
+      throw VibeBugException('Select a board before sending an issue.');
+    }
+
+    final resolvedDeveloper = assignedTo ?? _assignedTo;
+    if (resolvedDeveloper == null || resolvedDeveloper.isEmpty) {
+      throw VibeBugException('Select a developer before sending an issue.');
+    }
+
+    return _IssueTarget(
+      projectId: resolvedProject,
+      boardId: resolvedBoard,
+      assignedTo: resolvedDeveloper,
+    );
+  }
+}
+
+class _IssueTarget {
+  const _IssueTarget({
+    required this.projectId,
+    required this.boardId,
+    required this.assignedTo,
+  });
+
+  final String projectId;
+  final String boardId;
+  final String assignedTo;
 }
 
 /// Widget wrapper that reports Flutter framework errors in this subtree.
@@ -448,7 +612,8 @@ class VibeBugReportButton extends StatelessWidget {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              const Text('Report issue to developer', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600)),
+              const Text('Report issue to developer',
+                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600)),
               const SizedBox(height: 12),
               TextField(
                 controller: controller,

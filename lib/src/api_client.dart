@@ -5,8 +5,71 @@ import 'package:http/http.dart' as http;
 
 import 'vibebug_exception.dart';
 
+class VibeBugProject {
+  const VibeBugProject({
+    required this.id,
+    required this.name,
+    required this.role,
+  });
+
+  final String id;
+  final String name;
+  final String role;
+
+  factory VibeBugProject.fromJson(Map<String, dynamic> json) => VibeBugProject(
+        id: json['id'] as String? ?? '',
+        name: json['name'] as String? ?? 'Untitled project',
+        role: json['role'] as String? ?? json['project_role'] as String? ?? '',
+      );
+}
+
+class VibeBugBoard {
+  const VibeBugBoard({
+    required this.id,
+    required this.name,
+    this.status = 'active',
+    this.starred = false,
+    this.cardCount = 0,
+  });
+
+  final String id;
+  final String name;
+  final String status;
+  final bool starred;
+  final int cardCount;
+
+  factory VibeBugBoard.fromJson(Map<String, dynamic> json) => VibeBugBoard(
+        id: json['id'] as String? ?? '',
+        name: json['name'] as String? ?? 'Untitled board',
+        status: json['status'] as String? ?? 'active',
+        starred: json['starred'] as bool? ?? false,
+        cardCount: (json['cardCount'] as num?)?.toInt() ?? 0,
+      );
+}
+
+class VibeBugDeveloper {
+  const VibeBugDeveloper({
+    required this.id,
+    required this.name,
+    this.email = '',
+  });
+
+  final String id;
+  final String name;
+  final String email;
+
+  factory VibeBugDeveloper.fromJson(Map<String, dynamic> json) =>
+      VibeBugDeveloper(
+        id: json['id'] as String? ?? '',
+        name:
+            json['name'] as String? ?? json['email'] as String? ?? 'Developer',
+        email: json['email'] as String? ?? '',
+      );
+}
+
 class VibeBugApiClient {
-  VibeBugApiClient({required String baseUrl}) : _baseUrl = baseUrl.replaceAll(RegExp(r'/+$'), '');
+  VibeBugApiClient({required String baseUrl})
+      : _baseUrl = baseUrl.replaceAll(RegExp(r'/+$'), '');
 
   final String _baseUrl;
 
@@ -60,7 +123,8 @@ class VibeBugApiClient {
     return json ?? <String, dynamic>{};
   }
 
-  Future<String> login({required String email, required String password}) async {
+  Future<String> login(
+      {required String email, required String password}) async {
     final data = await _request(
       '/auth/login',
       method: 'POST',
@@ -69,20 +133,38 @@ class VibeBugApiClient {
     return data['token'] as String;
   }
 
-  Future<List<Map<String, dynamic>>> loadDevelopers(String token, String projectId) async {
+  Future<List<VibeBugProject>> loadProjects(String token) async {
+    final data = await _request('/projects', token: token);
+    return (data['projects'] as List<dynamic>? ?? [])
+        .map((item) =>
+            VibeBugProject.fromJson(Map<String, dynamic>.from(item as Map)))
+        .where((project) => project.id.isNotEmpty)
+        .toList();
+  }
+
+  Future<List<VibeBugDeveloper>> loadDevelopers(
+      String token, String projectId) async {
     final data = await _request(
       '/users/developers?projectId=${Uri.encodeComponent(projectId)}',
       token: token,
     );
-    return (data['developers'] as List<dynamic>? ?? []).cast<Map<String, dynamic>>();
+    return (data['developers'] as List<dynamic>? ?? [])
+        .map((item) =>
+            VibeBugDeveloper.fromJson(Map<String, dynamic>.from(item as Map)))
+        .where((developer) => developer.id.isNotEmpty)
+        .toList();
   }
 
-  Future<List<Map<String, dynamic>>> loadBoards(String token, String projectId) async {
+  Future<List<VibeBugBoard>> loadBoards(String token, String projectId) async {
     final data = await _request(
       '/boards?projectId=${Uri.encodeComponent(projectId)}',
       token: token,
     );
-    return (data['boards'] as List<dynamic>? ?? []).cast<Map<String, dynamic>>();
+    return (data['boards'] as List<dynamic>? ?? [])
+        .map((item) =>
+            VibeBugBoard.fromJson(Map<String, dynamic>.from(item as Map)))
+        .where((board) => board.id.isNotEmpty)
+        .toList();
   }
 
   Future<String> createIssue(
@@ -105,7 +187,9 @@ class VibeBugApiClient {
       body: {
         'projectId': projectId,
         'boardId': boardId,
-        'title': description.length > 120 ? description.substring(0, 120) : description,
+        'title': description.length > 120
+            ? description.substring(0, 120)
+            : description,
         'description': description,
         'priority': priority,
         'assignedTo': assignedTo,

@@ -4,11 +4,10 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:vibebug_flutter/vibebug_flutter.dart';
 
 void main() {
-  test('VibeBugOptions requires auth', () {
-    expect(
-      () => VibeBugOptions(projectId: 'proj_test'),
-      throwsAssertionError,
-    );
+  test('VibeBugOptions allows runtime tester sign in', () {
+    const options = VibeBugOptions();
+    expect(options.projectId, isNull);
+    expect(options.email, isNull);
   });
 
   test('VibeBugOptions accepts token', () {
@@ -17,7 +16,8 @@ void main() {
     expect(options.autoReportCrashes, isTrue);
   });
 
-  test('FlutterIssueMarkdown includes widget selectors and Flutter guidance', () {
+  test('FlutterIssueMarkdown includes widget selectors and Flutter guidance',
+      () {
     final markdown = const FlutterIssueMarkdown().build(
       summary: 'Checkout button overlaps price text',
       routeName: '/checkout',
@@ -71,7 +71,8 @@ void main() {
 
   test('exportSelectedRegion returns full when crop too small', () async {
     const capture = VibeBugScreenshotCapture();
-    const full = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+    const full =
+        'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
     final selected = await capture.exportSelectedRegion(
       fullDataUrl: full,
       cropRectLogical: const Rect.fromLTWH(0, 0, 1, 1),
