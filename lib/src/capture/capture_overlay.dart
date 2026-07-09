@@ -69,6 +69,16 @@ class _VibeBugCaptureOverlayState extends State<VibeBugCaptureOverlay> {
     await prefs.setDouble('${_bubblePositionKey}_y', offset.dy);
   }
 
+  void _onBubbleMoved(Offset offset) {
+    if (_bubbleOffset == offset) return;
+    setState(() => _bubbleOffset = offset);
+  }
+
+  void _onBubbleDragEnded(Offset offset) {
+    _onBubbleMoved(offset);
+    unawaited(_saveBubbleOffset(offset));
+  }
+
   void _startPicking() {
     if (!widget.enabled || !VibeBug.isInitialized || _capturing) return;
     setState(() {
@@ -410,10 +420,8 @@ class _VibeBugCaptureOverlayState extends State<VibeBugCaptureOverlay> {
           _DraggableReportBubble(
             offset: _bubbleOffset,
             draftCount: _draftShots.length,
-            onOffsetChanged: (offset) {
-              setState(() => _bubbleOffset = offset);
-              unawaited(_saveBubbleOffset(offset));
-            },
+            onOffsetChanged: _onBubbleMoved,
+            onDragEnd: _onBubbleDragEnded,
             onTap: () {
               if (_draftShots.isNotEmpty) {
                 unawaited(_openSubmitSheet());
@@ -438,6 +446,7 @@ class _DraggableReportBubble extends StatefulWidget {
     required this.offset,
     required this.draftCount,
     required this.onOffsetChanged,
+    required this.onDragEnd,
     required this.onTap,
     required this.onLongPress,
   });
@@ -445,6 +454,7 @@ class _DraggableReportBubble extends StatefulWidget {
   final Offset offset;
   final int draftCount;
   final ValueChanged<Offset> onOffsetChanged;
+  final ValueChanged<Offset> onDragEnd;
   final VoidCallback onTap;
   final VoidCallback onLongPress;
 
@@ -454,6 +464,7 @@ class _DraggableReportBubble extends StatefulWidget {
 
 class _DraggableReportBubbleState extends State<_DraggableReportBubble> {
   Offset? _dragOrigin;
+  Offset? _lastDragOffset;
   bool _moved = false;
 
   @override
@@ -471,6 +482,7 @@ class _DraggableReportBubbleState extends State<_DraggableReportBubble> {
       child: GestureDetector(
         onPanStart: (_) {
           _dragOrigin = widget.offset;
+          _lastDragOffset = widget.offset;
           _moved = false;
         },
         onPanUpdate: (details) {
@@ -480,11 +492,17 @@ class _DraggableReportBubbleState extends State<_DraggableReportBubble> {
             (_dragOrigin!.dx + details.delta.dx).clamp(8.0, maxX),
             (_dragOrigin!.dy + details.delta.dy).clamp(padding.top + 8, maxY),
           );
+          _lastDragOffset = next;
           widget.onOffsetChanged(next);
         },
         onPanEnd: (_) {
-          if (!_moved) widget.onTap();
+          if (!_moved) {
+            widget.onTap();
+          } else if (_lastDragOffset != null) {
+            widget.onDragEnd(_lastDragOffset!);
+          }
           _dragOrigin = null;
+          _lastDragOffset = null;
         },
         onLongPress: widget.onLongPress,
         child: Material(
