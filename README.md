@@ -1,29 +1,17 @@
 # vibebug_flutter
 
-Flutter SDK for [Vibe Bug Tracker](https://vibebugtracker.com) — Crashlytics-style crash and exception reporting for mobile apps under live testing.
+Flutter SDK for [Vibe Bug Tracker](https://vibebugtracker.com) — crash reporting plus Chrome-extension-style visual bug capture for Flutter apps under live testing.
 
 ## Features
 
 - Automatic crash and uncaught exception reporting
-- Offline queue — reports are retried when connectivity returns
-- Live testing: manual issue reports with `VibeBugReportButton`
-- Assigns issues to developers via the Vibe Bug Tracker API
-- Deduplication to avoid spam from repeated errors
+- **Draggable Report button** — testers can move the bubble anywhere on screen
+- **Widget selection** — tap a widget to capture it (selected crop + full screen context)
+- **Multi-screenshot issues** — up to 8 captures per issue, like the Chrome extension
+- **Flutter-specific AI markdown** — issue descriptions include widget selectors, route, and Flutter fix guidance
+- Offline queue with retry when connectivity returns
 
 ## Setup
-
-Add to `pubspec.yaml`:
-
-```yaml
-dependencies:
-  vibebug_flutter:
-    git:
-      url: https://github.com/adnanpk44/visualIssueTracker.git
-      path: packages/vibebug_flutter
-      ref: main
-```
-
-Or use a local path while developing in the monorepo:
 
 ```yaml
 dependencies:
@@ -44,27 +32,42 @@ Future<void> main() async {
     projectId: 'proj_your_project_id',
     email: 'tester@example.com',
     password: 'your-password',
-    // Optional: pin board/developer instead of auto-picking first
-    // boardId: 'brd_...',
-    // assignedTo: 'usr_...',
-    autoReportCrashes: true,
-    reportInBackground: true,
     onIssueSent: (issueId) => debugPrint('Reported $issueId'),
   ));
 
-  VibeBug.runGuarded(() => runApp(const MyApp()));
+  VibeBug.runGuarded(() {
+    runApp(
+      const VibeBugScope(
+        child: MyApp(),
+      ),
+    );
+  });
 }
 ```
 
-## Live testing — manual report
+## Visual bug reporting (recommended)
+
+Wrap your app with `VibeBugScope`. Testers get a draggable **Report** bubble:
+
+1. **Drag** the bubble to reposition it (position is remembered)
+2. **Tap** the bubble → hover highlights widgets → **tap a widget** to capture it
+3. Add a note for that capture
+4. **Add another** widget capture (up to 8) or **Review & send**
+5. Submit the issue — developers receive Flutter markdown + all screenshots
+
+Long-press the bubble to clear draft captures.
+
+## Legacy text-only report button
+
+`VibeBugReportButton` still works for quick text-only reports, but does not include widget selection or multi-capture.
+
+## Programmatic multi-capture submit
 
 ```dart
-Scaffold(
-  floatingActionButton: VibeBugReportButton(
-    pageUrl: '/checkout',
-    widgetKey: 'pay_button',
-  ),
-)
+await VibeBug.reportIssueWithCaptures(
+  summary: 'Checkout CTA overlaps total on small screens',
+  captures: shots, // List<VibeBugScreenshotShot>
+);
 ```
 
 ## Caught exceptions
@@ -77,28 +80,17 @@ try {
 }
 ```
 
-## Token-based auth
-
-```dart
-await VibeBug.initialize(VibeBugOptions(
-  projectId: 'proj_...',
-  token: 'your-bearer-token',
-));
-```
-
 ## API
 
-Uses the same `/api/extension` endpoints as the Chrome extension and flutter-tester-app:
+Uses `/api/extension/issues` with a `screenshots[]` payload matching the Chrome extension:
 
-- `POST /api/extension/auth/login`
-- `POST /api/extension/issues`
-- `GET /api/extension/boards`
-- `GET /api/extension/users/developers`
-
-Issues are created with stack traces in the description. Screenshots are optional (include via `screenshotProvider` in options).
+- `selectedScreenshotDataUrl` — cropped widget shot
+- `fullScreenshotDataUrl` — full screen context
+- `cssSelector` — Flutter widget selector trail (e.g. `flutter:ElevatedButton[key=payBtn]>Column>Scaffold`)
+- `domText` / `htmlSnippet` — semantics + widget context for AI markdown
 
 ## Notes
 
+- Widget inspection works best in **debug/profile** builds where Flutter exposes widget creators
+- Screenshot capture requires `VibeBugScope` (uses an internal `RepaintBoundary`)
 - Requires a tester account with access to the target project
-- Project must have an active paid plan on Vibe Bug Tracker
-- For screenshot capture, provide a `screenshotProvider` callback that returns a base64 data URL

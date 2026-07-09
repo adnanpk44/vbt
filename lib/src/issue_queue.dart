@@ -13,6 +13,7 @@ class PendingIssueReport {
     this.pageUrl,
     this.cssSelector,
     this.screenshotDataUrl,
+    this.screenshots = const [],
     this.isFatal = true,
   });
 
@@ -24,6 +25,7 @@ class PendingIssueReport {
   final String? pageUrl;
   final String? cssSelector;
   final String? screenshotDataUrl;
+  final List<Map<String, dynamic>> screenshots;
   final bool isFatal;
 
   Map<String, dynamic> toJson() => {
@@ -35,6 +37,7 @@ class PendingIssueReport {
         'pageUrl': pageUrl,
         'cssSelector': cssSelector,
         'screenshotDataUrl': screenshotDataUrl,
+        'screenshots': screenshots,
         'isFatal': isFatal,
       };
 
@@ -47,6 +50,9 @@ class PendingIssueReport {
         pageUrl: json['pageUrl'] as String?,
         cssSelector: json['cssSelector'] as String?,
         screenshotDataUrl: json['screenshotDataUrl'] as String?,
+        screenshots: (json['screenshots'] as List<dynamic>? ?? [])
+            .map((item) => Map<String, dynamic>.from(item as Map))
+            .toList(),
         isFatal: json['isFatal'] as bool? ?? true,
       );
 }
@@ -77,6 +83,7 @@ class IssueQueue {
     String? pageUrl,
     String? cssSelector,
     String? screenshotDataUrl,
+    List<Map<String, dynamic>> screenshots = const [],
     bool isFatal = true,
   }) async {
     final items = readAll();
@@ -89,6 +96,7 @@ class IssueQueue {
       pageUrl: pageUrl,
       cssSelector: cssSelector,
       screenshotDataUrl: screenshotDataUrl,
+      screenshots: screenshots,
       isFatal: isFatal,
     );
     items.add(report);

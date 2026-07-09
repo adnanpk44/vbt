@@ -10,6 +10,9 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:uuid/uuid.dart';
 
 import 'api_client.dart';
+import 'capture/capture_models.dart';
+import 'capture/capture_overlay.dart';
+import 'capture/flutter_issue_markdown.dart';
 import 'issue_queue.dart';
 import 'vibebug_exception.dart';
 import 'vibebug_options.dart';
@@ -123,6 +126,33 @@ class VibeBug {
     );
   }
 
+  /// Report a multi-capture Flutter UI issue with widget selectors and Flutter markdown.
+  static Future<String?> reportIssueWithCaptures({
+    required String summary,
+    required List<VibeBugScreenshotShot> captures,
+    String priority = 'medium',
+    String? routeName,
+  }) {
+    if (captures.isEmpty) {
+      throw VibeBugException('At least one capture is required.');
+    }
+    final markdown = const FlutterIssueMarkdown().build(
+      summary: summary,
+      captures: captures,
+      routeName: routeName ?? captures.first.pageUrl,
+    );
+    return _sendOrQueue(
+      description: markdown,
+      priority: priority,
+      pageUrl: captures.first.pageUrl,
+      cssSelector: captures.first.cssSelector,
+      fingerprint: _fingerprint(summary, StackTrace.current),
+      isFatal: false,
+      captureScreenshot: false,
+      screenshots: captures.map((shot) => shot.toApiJson()).toList(),
+    );
+  }
+
   /// Retry queued reports (e.g. after connectivity returns).
   static Future<void> flushPendingReports() async {
     if (_queue == null || _api == null || _options == null) return;
@@ -222,6 +252,7 @@ class VibeBug {
     String? pageUrl,
     String? cssSelector,
     String? screenshotDataUrl,
+    List<Map<String, dynamic>> screenshots = const [],
   }) async {
     if (_queue == null || _options == null) {
       throw VibeBugException('VibeBug.initialize() must be called first.');
@@ -245,6 +276,7 @@ class VibeBug {
       pageUrl: pageUrl,
       cssSelector: cssSelector,
       screenshotDataUrl: screenshot,
+      screenshots: screenshots,
       isFatal: isFatal,
     );
 
@@ -269,7 +301,9 @@ class VibeBug {
     await _resolveDefaults();
 
     final screenshots = <Map<String, dynamic>>[];
-    if (report.screenshotDataUrl != null && report.screenshotDataUrl!.isNotEmpty) {
+    if (report.screenshots.isNotEmpty) {
+      screenshots.addAll(report.screenshots);
+    } else if (report.screenshotDataUrl != null && report.screenshotDataUrl!.isNotEmpty) {
       screenshots.add({
         'id': _uuid.v4(),
         'description': report.description.length > 200 ? report.description.substring(0, 200) : report.description,
@@ -376,7 +410,7 @@ class _VibeBugErrorBoundaryState extends State<VibeBugErrorBoundary> {
   }
 }
 
-/// Floating action button for live testers to send an issue with optional note.
+/// Legacy floating action button. Prefer [VibeBugScope] for draggable capture + widget selection.
 class VibeBugReportButton extends StatelessWidget {
   const VibeBugReportButton({
     super.key,
@@ -393,6 +427,7 @@ class VibeBugReportButton extends StatelessWidget {
       onPressed: () => _showReportSheet(context),
       label: const Text('Report bug'),
       icon: const Icon(Icons.bug_report_outlined),
+      tooltip: 'Use VibeBugScope for draggable capture and widget selection',
     );
   }
 
