@@ -8,13 +8,18 @@ import 'capture_models.dart';
 class FlutterWidgetInspector {
   const FlutterWidgetInspector();
 
-  FlutterWidgetHit? hitTestAt(Offset globalPosition, {BuildContext? routeContext}) {
+  FlutterWidgetHit? hitTestAt(
+    Offset globalPosition, {
+    BuildContext? routeContext,
+    GlobalKey? boundaryKey,
+  }) {
     final result = HitTestResult();
     final views = WidgetsBinding.instance.platformDispatcher.views;
     if (views.isEmpty) return null;
 
     WidgetsBinding.instance.hitTestInView(result, globalPosition, views.first.viewId);
 
+    final boundaryObject = boundaryKey?.currentContext?.findRenderObject();
     RenderBox? targetBox;
     final ancestorTrail = <String>[];
 
@@ -22,6 +27,7 @@ class FlutterWidgetInspector {
       final target = entry.target;
       if (target is! RenderBox) continue;
       if (target is RenderView) continue;
+      if (boundaryObject != null && !_isDescendantOf(target, boundaryObject)) continue;
       if (!_isInspectableBox(target)) continue;
 
       final label = _widgetLabel(target);
@@ -173,5 +179,14 @@ class FlutterWidgetInspector {
         type.contains('IgnorePointer') ||
         type.contains('Semantics') ||
         type.contains('Builder');
+  }
+
+  bool _isDescendantOf(RenderObject node, RenderObject ancestor) {
+    RenderObject? current = node;
+    while (current != null) {
+      if (current == ancestor) return true;
+      current = current.parent;
+    }
+    return false;
   }
 }

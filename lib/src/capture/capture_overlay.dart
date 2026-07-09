@@ -95,8 +95,12 @@ class _VibeBugCaptureOverlayState extends State<VibeBugCaptureOverlay> {
     });
   }
 
-  void _updateHover(Offset position) {
-    final hit = _inspector.hitTestAt(position, routeContext: _sheetContext);
+  void _updateHover(Offset globalPosition) {
+    final hit = _inspector.hitTestAt(
+      globalPosition,
+      routeContext: _sheetContext,
+      boundaryKey: widget.boundaryKey,
+    );
     if (!mounted) return;
     if (hit?.selector != _hoverHit?.selector ||
         hit?.globalRect != _hoverHit?.globalRect) {
@@ -104,9 +108,13 @@ class _VibeBugCaptureOverlayState extends State<VibeBugCaptureOverlay> {
     }
   }
 
-  Future<void> _captureAt(Offset position) async {
+  Future<void> _captureAt(Offset globalPosition) async {
     if (_capturing) return;
-    final hit = _inspector.hitTestAt(position, routeContext: _sheetContext);
+    final hit = _inspector.hitTestAt(
+      globalPosition,
+      routeContext: _sheetContext,
+      boundaryKey: widget.boundaryKey,
+    );
     _stopPicking();
     if (hit == null) {
       _showSnack('Could not identify a widget at that position.');
@@ -355,60 +363,95 @@ class _VibeBugCaptureOverlayState extends State<VibeBugCaptureOverlay> {
     ScaffoldMessenger.of(navContext).showSnackBar(SnackBar(content: Text(message)));
   }
 
+  Rect? _highlightRectInOverlay(RenderBox overlayBox) {
+    final hit = _hoverHit;
+    if (hit == null) return null;
+    return Rect.fromPoints(
+      overlayBox.globalToLocal(hit.globalRect.topLeft),
+      overlayBox.globalToLocal(hit.globalRect.bottomRight),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
-    return Stack(
-      clipBehavior: Clip.none,
-      fit: StackFit.expand,
-      children: [
-        widget.child,
-        if (_picking)
-          Positioned.fill(
-            child: Listener(
-              behavior: HitTestBehavior.translucent,
-              onPointerDown: (event) => _updateHover(event.position),
-              onPointerMove: (event) => _updateHover(event.position),
-              onPointerUp: (event) => unawaited(_captureAt(event.position)),
-              child: Stack(
-                fit: StackFit.expand,
-                children: [
-                  const ColoredBox(color: Color(0x33000000)),
-                  if (_hoverHit != null)
-                    Positioned.fromRect(
-                      rect: _hoverHit!.globalRect,
-                      child: IgnorePointer(
-                        child: DecoratedBox(
-                          decoration: BoxDecoration(
-                            border: Border.all(color: const Color(0xFF60A5FA), width: 2),
-                            color: const Color(0x2260A5FA),
+    return SizedBox.expand(
+      child: Stack(
+        clipBehavior: Clip.none,
+        fit: StackFit.expand,
+        children: [
+          widget.child,
+          if (_picking)
+            Positioned.fill(
+              child: LayoutBuilder(
+                builder: (context, _) {
+                  final overlayBox = context.findRenderObject() as RenderBox?;
+                  final highlightRect =
+                      overlayBox == null ? null : _highlightRectInOverlay(overlayBox);
+
+                  return Stack(
+                    fit: StackFit.expand,
+                    children: [
+                      Positioned.fill(
+                        child: Listener(
+                          behavior: HitTestBehavior.translucent,
+                          onPointerDown: (event) {
+                            final global = overlayBox?.localToGlobal(event.position) ?? event.position;
+                            _updateHover(global);
+                          },
+                          onPointerMove: (event) {
+                            final global = overlayBox?.localToGlobal(event.position) ?? event.position;
+                            _updateHover(global);
+                          },
+                          onPointerUp: (event) {
+                            final global = overlayBox?.localToGlobal(event.position) ?? event.position;
+                            unawaited(_captureAt(global));
+                          },
+                        ),
+                      ),
+                      const Positioned.fill(
+                        child: IgnorePointer(
+                          child: ColoredBox(color: Color(0x33000000)),
+                        ),
+                      ),
+                      if (highlightRect != null)
+                        Positioned.fromRect(
+                          rect: highlightRect,
+                          child: const IgnorePointer(
+                            child: DecoratedBox(
+                              decoration: BoxDecoration(
+                                border: Border.fromBorderSide(
+                                  BorderSide(color: Color(0xFF60A5FA), width: 2),
+                                ),
+                                color: Color(0x2260A5FA),
+                              ),
+                            ),
+                          ),
+                        ),
+                      Positioned(
+                        top: MediaQuery.paddingOf(context).top + 8,
+                        left: 16,
+                        right: 16,
+                        child: Material(
+                          elevation: 4,
+                          borderRadius: BorderRadius.circular(12),
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                            child: Row(
+                              children: [
+                                const Expanded(
+                                  child: Text('Tap the widget that looks wrong'),
+                                ),
+                                TextButton(onPressed: _stopPicking, child: const Text('Cancel')),
+                              ],
+                            ),
                           ),
                         ),
                       ),
-                    ),
-                  Positioned(
-                    top: MediaQuery.paddingOf(context).top + 8,
-                    left: 16,
-                    right: 16,
-                    child: Material(
-                      elevation: 4,
-                      borderRadius: BorderRadius.circular(12),
-                      child: Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-                        child: Row(
-                          children: [
-                            const Expanded(
-                              child: Text('Tap the widget that looks wrong'),
-                            ),
-                            TextButton(onPressed: _stopPicking, child: const Text('Cancel')),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ),
-                ],
+                    ],
+                  );
+                },
               ),
             ),
-          ),
         if (_capturing)
           const Positioned.fill(
             child: ColoredBox(
@@ -436,7 +479,8 @@ class _VibeBugCaptureOverlayState extends State<VibeBugCaptureOverlay> {
               }
             },
           ),
-      ],
+        ],
+      ),
     );
   }
 }
@@ -463,7 +507,6 @@ class _DraggableReportBubble extends StatefulWidget {
 }
 
 class _DraggableReportBubbleState extends State<_DraggableReportBubble> {
-  Offset? _dragOrigin;
   Offset? _lastDragOffset;
   bool _moved = false;
 
@@ -481,16 +524,14 @@ class _DraggableReportBubbleState extends State<_DraggableReportBubble> {
       top: dy,
       child: GestureDetector(
         onPanStart: (_) {
-          _dragOrigin = widget.offset;
           _lastDragOffset = widget.offset;
           _moved = false;
         },
         onPanUpdate: (details) {
-          if (_dragOrigin == null) return;
           _moved = true;
           final next = Offset(
-            (_dragOrigin!.dx + details.delta.dx).clamp(8.0, maxX),
-            (_dragOrigin!.dy + details.delta.dy).clamp(padding.top + 8, maxY),
+            (widget.offset.dx + details.delta.dx).clamp(8.0, maxX),
+            (widget.offset.dy + details.delta.dy).clamp(padding.top + 8, maxY),
           );
           _lastDragOffset = next;
           widget.onOffsetChanged(next);
@@ -501,7 +542,6 @@ class _DraggableReportBubbleState extends State<_DraggableReportBubble> {
           } else if (_lastDragOffset != null) {
             widget.onDragEnd(_lastDragOffset!);
           }
-          _dragOrigin = null;
           _lastDragOffset = null;
         },
         onLongPress: widget.onLongPress,
