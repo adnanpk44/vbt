@@ -12,7 +12,6 @@ import 'package:uuid/uuid.dart';
 import 'api_client.dart';
 import 'capture/capture_models.dart';
 import 'capture/capture_overlay.dart';
-import 'capture/flutter_issue_markdown.dart';
 import 'issue_queue.dart';
 import 'vibebug_exception.dart';
 import 'vibebug_options.dart';
@@ -196,13 +195,8 @@ class VibeBug {
     if (captures.isEmpty) {
       throw VibeBugException('At least one capture is required.');
     }
-    final markdown = const FlutterIssueMarkdown().build(
-      summary: summary,
-      captures: captures,
-      routeName: routeName ?? captures.first.pageUrl,
-    );
     return _sendOrQueue(
-      description: markdown,
+      description: summary.trim(),
       priority: priority,
       projectId: projectId,
       boardId: boardId,

@@ -4,7 +4,10 @@ import 'package:flutter/foundation.dart';
 
 import 'capture_models.dart';
 
-/// Builds a Flutter-focused issue description for developers and coding agents.
+/// Builds a Flutter-focused agent pack for local tooling.
+///
+/// Do not persist this as `issues.description` for the website — store the short
+/// human summary and keep widget/context fields on each screenshot payload.
 class FlutterIssueMarkdown {
   const FlutterIssueMarkdown();
 

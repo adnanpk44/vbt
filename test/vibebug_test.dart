@@ -16,7 +16,7 @@ void main() {
     expect(options.autoReportCrashes, isTrue);
   });
 
-  test('FlutterIssueMarkdown includes widget selectors and Flutter guidance',
+  test('FlutterIssueMarkdown builds agent packs but is not the website description',
       () {
     final markdown = const FlutterIssueMarkdown().build(
       summary: 'Checkout button overlaps price text',
@@ -40,6 +40,8 @@ void main() {
     expect(markdown, contains('flutter:ElevatedButton[key=payBtn]'));
     expect(markdown, contains('Instructions for the Flutter coding agent'));
     expect(markdown, contains('layout parents'));
+    // Website storage uses the short summary only (see reportIssueWithCaptures).
+    expect('Checkout button overlaps price text'.length, lessThan(markdown.length));
   });
 
   test('VibeBugScreenshotShot serializes API payload fields', () {
