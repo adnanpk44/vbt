@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
@@ -80,10 +81,13 @@ class _CaptureRegionEditorState extends State<CaptureRegionEditor> {
   Offset? _dragStart;
   Rect? _cropAtDragStart;
   bool _exporting = false;
+  bool _drawingNewCrop = false;
 
-  static const _cornerHit = 28.0;
-  static const _edgeBand = 22.0;
+  /// Touch targets in display pixels (independent of screenshot scale).
+  static const _cornerHitDisplay = 44.0;
+  static const _edgeBandDisplay = 28.0;
   static const _minCropSize = 40.0;
+  static const _defaultTapCrop = 140.0;
 
   @override
   void initState() {
@@ -135,15 +139,37 @@ class _CaptureRegionEditorState extends State<CaptureRegionEditor> {
   }
 
   void _onPanStart(DragStartDetails details, _ImageLayout layout) {
-    final logical = layout.displayToLogical(details.localPosition);
+    // localPosition is relative to the image SizedBox (GestureDetector is inside it).
+    final display = details.localPosition;
+    final logical = layout.displayToLogical(display);
+
     if (_mode == _EditorMode.highlight) {
       _activeStroke = [logical];
+      _activeHandle = null;
+      _drawingNewCrop = false;
       return;
     }
 
-    _activeHandle = _hitHandle(logical);
+    final handle = _hitHandleDisplay(display, layout);
     _dragStart = logical;
     _cropAtDragStart = _cropRect;
+
+    if (handle != null) {
+      _activeHandle = handle;
+      _drawingNewCrop = false;
+      return;
+    }
+
+    // Tap/drag outside the frame starts a new crop from that point.
+    _activeHandle = _CropHandle.bottomRight;
+    _drawingNewCrop = true;
+    final seed = VibeBugScreenshotCapture.clampRect(
+      Rect.fromLTWH(logical.dx, logical.dy, 1, 1),
+      widget.imageLogicalSize,
+      minSize: 1,
+    );
+    setState(() => _cropRect = seed);
+    _cropAtDragStart = seed;
   }
 
   void _onPanUpdate(DragUpdateDetails details, _ImageLayout layout) {
@@ -160,11 +186,22 @@ class _CaptureRegionEditorState extends State<CaptureRegionEditor> {
         _cropAtDragStart == null) {
       return;
     }
+
+    if (_drawingNewCrop) {
+      setState(() {
+        _cropRect = VibeBugScreenshotCapture.clampRect(
+          Rect.fromPoints(_dragStart!, logical),
+          widget.imageLogicalSize,
+          minSize: 1,
+        );
+      });
+      return;
+    }
+
     final delta = logical - _dragStart!;
     setState(() {
-      _cropRect = _resizeCrop(_cropAtDragStart!, _activeHandle!, delta);
       _cropRect = VibeBugScreenshotCapture.clampRect(
-        _cropRect,
+        _resizeCrop(_cropAtDragStart!, _activeHandle!, delta),
         widget.imageLogicalSize,
         minSize: _minCropSize,
       );
@@ -179,12 +216,46 @@ class _CaptureRegionEditorState extends State<CaptureRegionEditor> {
         _strokes.add(VibeBugHighlightStroke(List.from(_activeStroke!)));
         _activeStroke = null;
       });
+      _resetDrag();
       return;
     }
+
+    if (_mode == _EditorMode.crop && _drawingNewCrop && _dragStart != null) {
+      // Tap without meaningful drag → place a default-size frame at the tap.
+      final size = _cropRect;
+      final tooSmall = size.width < _minCropSize || size.height < _minCropSize;
+      if (tooSmall) {
+        setState(() {
+          _cropRect = VibeBugScreenshotCapture.clampRect(
+            Rect.fromCenter(
+              center: _dragStart!,
+              width: _defaultTapCrop,
+              height: _defaultTapCrop,
+            ),
+            widget.imageLogicalSize,
+            minSize: _minCropSize,
+          );
+        });
+      } else {
+        setState(() {
+          _cropRect = VibeBugScreenshotCapture.clampRect(
+            _cropRect,
+            widget.imageLogicalSize,
+            minSize: _minCropSize,
+          );
+        });
+      }
+    }
+
+    _resetDrag();
+  }
+
+  void _resetDrag() {
     _activeHandle = null;
     _dragStart = null;
     _cropAtDragStart = null;
     _activeStroke = null;
+    _drawingNewCrop = false;
   }
 
   Rect _resizeCrop(Rect base, _CropHandle handle, Offset delta) {
@@ -218,56 +289,55 @@ class _CaptureRegionEditorState extends State<CaptureRegionEditor> {
     }
   }
 
-  _CropHandle? _hitHandle(Offset logical) {
-    final r = _cropRect;
-    if (!r.inflate(8).contains(logical)) return null;
+  /// Hit-test in display pixels so handles stay easy to grab at any zoom.
+  _CropHandle? _hitHandleDisplay(Offset display, _ImageLayout layout) {
+    final r = layout.logicalToDisplayRect(_cropRect);
+    final corner = _cornerHitDisplay;
+    final edge = _edgeBandDisplay;
 
-    final corners = {
+    final corners = <_CropHandle, Offset>{
       _CropHandle.topLeft: r.topLeft,
       _CropHandle.topRight: r.topRight,
       _CropHandle.bottomLeft: r.bottomLeft,
       _CropHandle.bottomRight: r.bottomRight,
     };
     for (final entry in corners.entries) {
-      if (Rect.fromCenter(
-        center: entry.value,
-        width: _cornerHit,
-        height: _cornerHit,
-      ).contains(logical)) {
+      if (Rect.fromCenter(center: entry.value, width: corner, height: corner)
+          .contains(display)) {
         return entry.key;
       }
     }
 
     final inHorizontalSpan =
-        logical.dx >= r.left + _cornerHit && logical.dx <= r.right - _cornerHit;
+        display.dx >= r.left + corner / 2 && display.dx <= r.right - corner / 2;
     final inVerticalSpan =
-        logical.dy >= r.top + _cornerHit && logical.dy <= r.bottom - _cornerHit;
+        display.dy >= r.top + corner / 2 && display.dy <= r.bottom - corner / 2;
 
     if (inHorizontalSpan &&
-        logical.dy >= r.top &&
-        logical.dy <= r.top + _edgeBand) {
+        display.dy >= r.top - edge / 2 &&
+        display.dy <= r.top + edge) {
       return _CropHandle.top;
     }
     if (inHorizontalSpan &&
-        logical.dy >= r.bottom - _edgeBand &&
-        logical.dy <= r.bottom) {
+        display.dy >= r.bottom - edge &&
+        display.dy <= r.bottom + edge / 2) {
       return _CropHandle.bottom;
     }
     if (inVerticalSpan &&
-        logical.dx >= r.left &&
-        logical.dx <= r.left + _edgeBand) {
+        display.dx >= r.left - edge / 2 &&
+        display.dx <= r.left + edge) {
       return _CropHandle.left;
     }
     if (inVerticalSpan &&
-        logical.dx >= r.right - _edgeBand &&
-        logical.dx <= r.right) {
+        display.dx >= r.right - edge &&
+        display.dx <= r.right + edge / 2) {
       return _CropHandle.right;
     }
 
-    final inner = r.deflate(_edgeBand);
-    if (inner.width >= _minCropSize &&
-        inner.height >= _minCropSize &&
-        inner.contains(logical)) {
+    // Interior of the frame moves it. Outer margin still counts as move so
+    // small frames remain draggable.
+    final moveZone = r.inflate(4);
+    if (moveZone.contains(display)) {
       return _CropHandle.move;
     }
 
@@ -312,14 +382,15 @@ class _CaptureRegionEditorState extends State<CaptureRegionEditor> {
                   maxSize:
                       Size(constraints.maxWidth, constraints.maxHeight - 8),
                 );
-                return GestureDetector(
-                  onPanStart: (d) => _onPanStart(d, layout),
-                  onPanUpdate: (d) => _onPanUpdate(d, layout),
-                  onPanEnd: _onPanEnd,
-                  child: Center(
-                    child: SizedBox(
-                      width: layout.displaySize.width,
-                      height: layout.displaySize.height,
+                return Center(
+                  child: SizedBox(
+                    width: layout.displaySize.width,
+                    height: layout.displaySize.height,
+                    child: GestureDetector(
+                      behavior: HitTestBehavior.opaque,
+                      onPanStart: (d) => _onPanStart(d, layout),
+                      onPanUpdate: (d) => _onPanUpdate(d, layout),
+                      onPanEnd: _onPanEnd,
                       child: Stack(
                         children: [
                           Positioned.fill(
@@ -340,6 +411,7 @@ class _CaptureRegionEditorState extends State<CaptureRegionEditor> {
                                         .map(layout.logicalToDisplay)
                                         .toList(),
                                 ],
+                                showMoveHint: _mode == _EditorMode.crop,
                               ),
                             ),
                           ),
@@ -384,7 +456,14 @@ class _CaptureRegionEditorState extends State<CaptureRegionEditor> {
               onSelectionChanged:
                   _exporting ? null : (s) => setState(() => _mode = s.first),
             ),
-            const SizedBox(height: 6),
+            const SizedBox(height: 4),
+            Text(
+              _mode == _EditorMode.crop
+                  ? 'Drag corners/edges to resize · drag inside to move · tap outside to place a new frame'
+                  : 'Draw freehand marks on the selected area',
+              textAlign: TextAlign.center,
+              style: const TextStyle(color: Color(0xFF94A3B8), fontSize: 11),
+            ),
             Row(
               mainAxisAlignment: MainAxisAlignment.end,
               children: [
@@ -399,7 +478,8 @@ class _CaptureRegionEditorState extends State<CaptureRegionEditor> {
                               minSize: _minCropSize,
                             );
                           }),
-                  icon: const Icon(Icons.center_focus_strong, color: Colors.white70),
+                  icon: const Icon(Icons.center_focus_strong,
+                      color: Colors.white70),
                 ),
                 if (_strokes.isNotEmpty) ...[
                   IconButton(
@@ -411,8 +491,9 @@ class _CaptureRegionEditorState extends State<CaptureRegionEditor> {
                   ),
                   IconButton(
                     tooltip: 'Clear marks',
-                    onPressed:
-                        _exporting ? null : () => setState(() => _strokes.clear()),
+                    onPressed: _exporting
+                        ? null
+                        : () => setState(() => _strokes.clear()),
                     icon: const Icon(Icons.clear_all, color: Colors.white70),
                   ),
                 ],
@@ -503,7 +584,7 @@ class _ImageLayout {
     if (imageSize.width <= 0 || imageSize.height <= 0) return 1;
     final sx = maxSize.width / imageSize.width;
     final sy = maxSize.height / imageSize.height;
-    return sx < sy ? sx : sy;
+    return math.min(sx, sy);
   }
 
   Offset displayToLogical(Offset display) => display / scale;
@@ -539,10 +620,15 @@ class _EditorImage extends StatelessWidget {
 }
 
 class _EditorPainter extends CustomPainter {
-  const _EditorPainter({required this.cropRect, required this.strokes});
+  const _EditorPainter({
+    required this.cropRect,
+    required this.strokes,
+    this.showMoveHint = true,
+  });
 
   final Rect cropRect;
   final List<List<Offset>> strokes;
+  final bool showMoveHint;
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -557,28 +643,45 @@ class _EditorPainter extends CustomPainter {
       Paint()
         ..color = const Color(0xFF60A5FA)
         ..style = PaintingStyle.stroke
-        ..strokeWidth = 2,
+        ..strokeWidth = 2.5,
     );
 
-    final inner = cropRect.deflate(22);
-    if (inner.width > 24 && inner.height > 24) {
-      canvas.drawRect(
-        inner,
-        Paint()
-          ..color = const Color(0x4460A5FA)
-          ..style = PaintingStyle.stroke
-          ..strokeWidth = 1,
-      );
-    }
-
     final handlePaint = Paint()..color = const Color(0xFF60A5FA);
+    final handleBorder = Paint()
+      ..color = Colors.white
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 2;
     for (final c in [
       cropRect.topLeft,
       cropRect.topRight,
       cropRect.bottomLeft,
       cropRect.bottomRight
     ]) {
-      canvas.drawCircle(c, 6, handlePaint);
+      canvas.drawCircle(c, 8, handlePaint);
+      canvas.drawCircle(c, 8, handleBorder);
+    }
+
+    // Edge mid-handles for easier side resizing.
+    final edgeCenters = [
+      Offset(cropRect.center.dx, cropRect.top),
+      Offset(cropRect.center.dx, cropRect.bottom),
+      Offset(cropRect.left, cropRect.center.dy),
+      Offset(cropRect.right, cropRect.center.dy),
+    ];
+    for (final c in edgeCenters) {
+      canvas.drawCircle(c, 5, handlePaint);
+      canvas.drawCircle(c, 5, handleBorder);
+    }
+
+    if (showMoveHint && cropRect.width > 48 && cropRect.height > 48) {
+      final grip = Paint()
+        ..color = const Color(0x8860A5FA)
+        ..strokeWidth = 2
+        ..strokeCap = StrokeCap.round;
+      final cx = cropRect.center.dx;
+      final cy = cropRect.center.dy;
+      canvas.drawLine(Offset(cx - 10, cy), Offset(cx + 10, cy), grip);
+      canvas.drawLine(Offset(cx, cy - 10), Offset(cx, cy + 10), grip);
     }
 
     final strokePaint = Paint()
@@ -604,6 +707,7 @@ class _EditorPainter extends CustomPainter {
   @override
   bool shouldRepaint(covariant _EditorPainter oldDelegate) {
     return oldDelegate.cropRect != cropRect ||
-        oldDelegate.strokes.length != strokes.length;
+        oldDelegate.strokes.length != strokes.length ||
+        oldDelegate.showMoveHint != showMoveHint;
   }
 }

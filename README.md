@@ -19,37 +19,59 @@ dependencies:
     path: ../packages/vibebug_flutter
 ```
 
-Initialize before `runApp`:
+Initialize and wrap with the same zone + MaterialApp builder:
 
 ```dart
 import 'package:flutter/material.dart';
 import 'package:vibebug_flutter/vibebug_flutter.dart';
 
-Future<void> main() async {
-  WidgetsFlutterBinding.ensureInitialized();
-
-  await VibeBug.initialize(VibeBugOptions(
-    onIssueSent: (issueId) => debugPrint('Reported $issueId'),
-  ));
-
+void main() {
+  // ensureInitialized and runApp must run in the same zone.
   VibeBug.runGuarded(() {
-    runApp(
-      const VibeBugScope(
-        child: MyApp(),
-      ),
-    );
+    WidgetsFlutterBinding.ensureInitialized();
+    runApp(const MyApp());
   });
+}
+
+class MyApp extends StatelessWidget {
+  const MyApp({super.key});
+
+  static final _navKey = GlobalKey<NavigatorState>();
+
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      navigatorKey: _navKey,
+      // Keep VibeBugScope under MaterialApp so Directionality/Theme exist.
+      builder: (context, child) => VibeBugScope(
+        navigatorKey: _navKey,
+        child: child ?? const SizedBox.shrink(),
+      ),
+      home: const HomePage(),
+    );
+  }
 }
 ```
 
+```dart
+await VibeBug.initialize(VibeBugOptions(
+  onIssueSent: (issueId) => debugPrint('Reported $issueId'),
+));
+```
+
+Call `initialize` before or after `runApp` (e.g. from your root widget after setup).
+
 ## Visual bug reporting (recommended)
 
-Wrap your app with `VibeBugScope`. When using `MaterialApp.router`, pass the router navigator key:
+Put `VibeBugScope` in `MaterialApp.builder` (not above `MaterialApp`). When using `MaterialApp.router`, pass the router navigator key:
 
 ```dart
-VibeBugScope(
-  navigatorKey: goRouter.routerDelegate.navigatorKey,
-  child: MyApp(),
+MaterialApp.router(
+  routerConfig: goRouter,
+  builder: (context, child) => VibeBugScope(
+    navigatorKey: goRouter.routerDelegate.navigatorKey,
+    child: child ?? const SizedBox.shrink(),
+  ),
 )
 ```
 

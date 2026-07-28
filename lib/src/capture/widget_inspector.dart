@@ -22,8 +22,8 @@ class FlutterWidgetInspector {
         .hitTestInView(result, globalPosition, views.first.viewId);
 
     final boundaryObject = boundaryKey?.currentContext?.findRenderObject();
-    RenderBox? targetBox;
-    final ancestorTrail = <String>[];
+    final viewSize = views.first.physicalSize / views.first.devicePixelRatio;
+    final candidates = <_HitCandidate>[];
 
     for (final entry in result.path) {
       final target = entry.target;
@@ -36,27 +36,46 @@ class FlutterWidgetInspector {
           _isDescendantOf(target, excludeSubtreeRoot)) {
         continue;
       }
-      if (!_isInspectableBox(target)) continue;
+      if (!_isInspectableBox(target, viewSize)) continue;
 
       final label = _widgetLabel(target);
       if (label.isEmpty) continue;
 
-      if (targetBox == null) {
-        targetBox = target;
-      } else if (!ancestorTrail.contains(label)) {
-        ancestorTrail.add(label);
-      }
+      final rect = _globalRect(target);
+      if (rect == null || rect.width < 2 || rect.height < 2) continue;
+      if (!rect.inflate(1).contains(globalPosition)) continue;
+
+      candidates.add(
+        _HitCandidate(
+          box: target,
+          label: label,
+          rect: rect,
+          score: _scoreCandidate(target, rect, viewSize),
+        ),
+      );
     }
 
-    if (targetBox == null) return null;
+    if (candidates.isEmpty) return null;
 
-    final rect = _globalRect(targetBox);
-    if (rect == null || rect.width < 2 || rect.height < 2) return null;
+    candidates.sort((a, b) => a.score.compareTo(b.score));
+    final best = candidates.first;
+    final targetBox = best.box;
+
+    final ancestorTrail = <String>[];
+    for (final candidate in candidates.skip(1)) {
+      if (!ancestorTrail.contains(candidate.label)) {
+        ancestorTrail.add(candidate.label);
+      }
+      if (ancestorTrail.length >= 8) break;
+    }
 
     final widgetType = _widgetType(targetBox);
     final widgetKey = _widgetKey(targetBox);
     final selector = _buildSelector(
-        widgetType: widgetType, widgetKey: widgetKey, ancestors: ancestorTrail);
+      widgetType: widgetType,
+      widgetKey: widgetKey,
+      ancestors: ancestorTrail,
+    );
     final semanticsLabel = _semanticsLabel(targetBox);
     final widgetSnippet = _widgetSnippet(targetBox, semanticsLabel);
     final routeName = _routeName(routeContext);
@@ -68,27 +87,60 @@ class FlutterWidgetInspector {
       semanticsLabel: semanticsLabel,
       widgetSnippet: widgetSnippet,
       routeName: routeName,
-      globalRect: rect,
+      globalRect: best.rect,
       ancestorTrail: ancestorTrail,
     );
   }
 
-  bool _isInspectableBox(RenderBox box) {
+  /// Lower score = better target. Prefer compact, labeled, interactive widgets.
+  double _scoreCandidate(RenderBox box, Rect rect, Size viewSize) {
+    final area = rect.width * rect.height;
+    final viewArea = (viewSize.width * viewSize.height).clamp(1.0, double.infinity);
+    var score = area;
+
+    // Heavily penalize near-fullscreen shells (Scaffold body, Overlay theater, etc.).
+    final coverage = area / viewArea;
+    if (coverage > 0.85) score += 1e9;
+    if (coverage > 0.55) score += 1e7;
+
+    final type = _widgetType(box);
+    if (_isShellWidget(type)) score += 5e6;
+    if (_isInteractiveWidget(type)) score -= 5000;
+    if (_semanticsLabel(box).isNotEmpty) score -= 2500;
+    if (_widgetKey(box) != null) score -= 1500;
+
+    // Slight preference for widgets closer to typical control size.
+    final ideal = 120.0 * 48.0;
+    score += (area - ideal).abs() * 0.01;
+
+    return score;
+  }
+
+  bool _isInspectableBox(RenderBox box, Size viewSize) {
     final size = box.size;
     if (size.width < 2 || size.height < 2) return false;
     final typeName = box.runtimeType.toString();
-    if (typeName.contains('VibeBug') ||
-        typeName.contains('ModalBarrier') ||
-        typeName.contains('SnapshotWidget')) {
-      return false;
-    }
+    if (_isNoiseRenderObject(typeName)) return false;
+
     final creator = _creatorWidget(box);
     if (creator != null) {
       final widgetType = creator.runtimeType.toString();
+      if (_isNoiseWidget(widgetType)) return false;
       if (widgetType.contains('VibeBug') ||
           widgetType.contains('ModalBarrier')) {
         return false;
       }
+    } else if (typeName.contains('VibeBug') ||
+        typeName.contains('ModalBarrier') ||
+        typeName.contains('SnapshotWidget')) {
+      return false;
+    }
+
+    final area = size.width * size.height;
+    final viewArea = viewSize.width * viewSize.height;
+    if (viewArea > 0 && area / viewArea > 0.92) {
+      // Keep only if it might be the only candidate; scoring will demote it.
+      return true;
     }
     return true;
   }
@@ -110,7 +162,11 @@ class FlutterWidgetInspector {
 
   String _widgetLabel(RenderBox box) {
     final creator = _creatorWidget(box);
-    if (creator == null) return box.runtimeType.toString();
+    if (creator == null) {
+      final type = box.runtimeType.toString();
+      if (_isNoiseRenderObject(type)) return '';
+      return type;
+    }
     final type = creator.runtimeType.toString();
     if (_isNoiseWidget(type)) return '';
     final key = creator.key;
@@ -193,8 +249,56 @@ class FlutterWidgetInspector {
     return type.contains('Inherited') ||
         type.contains('Listener') ||
         type.contains('IgnorePointer') ||
+        type.contains('AbsorbPointer') ||
         type.contains('Semantics') ||
-        type.contains('Builder');
+        type.contains('Builder') ||
+        type.contains('AnnotatedRegion') ||
+        type.contains('TapRegion') ||
+        type.contains('ExcludeSemantics') ||
+        type.contains('BlockSemantics') ||
+        type == '_Theater' ||
+        type.contains('Overlay') ||
+        type.contains('SnapshotWidget') ||
+        type.contains('VibeBug');
+  }
+
+  bool _isNoiseRenderObject(String type) {
+    return type.contains('AbsorbPointer') ||
+        type.contains('IgnorePointer') ||
+        type.contains('Semantics') ||
+        type.contains('AnnotatedRegion') ||
+        type.contains('Theater') ||
+        type.contains('Overlay') ||
+        type.contains('ModalBarrier') ||
+        type.contains('SnapshotWidget') ||
+        type.contains('VibeBug');
+  }
+
+  bool _isShellWidget(String type) {
+    return type.contains('Scaffold') ||
+        type.contains('MaterialApp') ||
+        type.contains('CupertinoApp') ||
+        type.contains('Navigator') ||
+        type.contains('Theater') ||
+        type.contains('Overlay') ||
+        type == 'Material' ||
+        type == 'DecoratedBox' ||
+        type == 'ColoredBox';
+  }
+
+  bool _isInteractiveWidget(String type) {
+    return type.contains('Button') ||
+        type.contains('TextField') ||
+        type.contains('TextFormField') ||
+        type.contains('Checkbox') ||
+        type.contains('Switch') ||
+        type.contains('Slider') ||
+        type.contains('InkWell') ||
+        type.contains('GestureDetector') ||
+        type.contains('ListTile') ||
+        type.contains('IconButton') ||
+        type.contains('Tab') ||
+        type.contains('Chip');
   }
 
   bool _isDescendantOf(RenderObject node, RenderObject ancestor) {
@@ -205,4 +309,18 @@ class FlutterWidgetInspector {
     }
     return false;
   }
+}
+
+class _HitCandidate {
+  const _HitCandidate({
+    required this.box,
+    required this.label,
+    required this.rect,
+    required this.score,
+  });
+
+  final RenderBox box;
+  final String label;
+  final Rect rect;
+  final double score;
 }

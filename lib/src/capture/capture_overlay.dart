@@ -363,19 +363,14 @@ class _VibeBugCaptureOverlayState extends State<VibeBugCaptureOverlay> {
             Listener(
               behavior: HitTestBehavior.translucent,
               onPointerDown: (event) {
-                final global =
-                    overlayBox?.localToGlobal(event.position) ?? event.position;
-                _updateHover(global);
+                // PointerEvent.position is already in global logical coordinates.
+                _updateHover(event.position);
               },
               onPointerMove: (event) {
-                final global =
-                    overlayBox?.localToGlobal(event.position) ?? event.position;
-                _updateHover(global);
+                _updateHover(event.position);
               },
               onPointerUp: (event) {
-                final global =
-                    overlayBox?.localToGlobal(event.position) ?? event.position;
-                unawaited(_captureAt(global));
+                unawaited(_captureAt(event.position));
               },
             ),
             if (highlightRect != null)
