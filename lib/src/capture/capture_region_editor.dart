@@ -431,6 +431,7 @@ class _CaptureRegionEditorState extends State<CaptureRegionEditor> {
   }
 
   Widget _buildToolbar() {
+    const brand = Color(0xFF22C55E);
     return Material(
       color: const Color(0xFF111827),
       child: Padding(
@@ -439,22 +440,53 @@ class _CaptureRegionEditorState extends State<CaptureRegionEditor> {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            SegmentedButton<_EditorMode>(
-              segments: const [
-                ButtonSegment(
-                  value: _EditorMode.crop,
-                  label: Text('Crop'),
-                  icon: Icon(Icons.crop, size: 18),
+            DecoratedBox(
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: SegmentedButton<_EditorMode>(
+                segments: const [
+                  ButtonSegment(
+                    value: _EditorMode.crop,
+                    label: Text('Crop'),
+                    icon: Icon(Icons.crop, size: 18),
+                  ),
+                  ButtonSegment(
+                    value: _EditorMode.highlight,
+                    label: Text('Highlight'),
+                    icon: Icon(Icons.draw, size: 18),
+                  ),
+                ],
+                selected: {_mode},
+                onSelectionChanged:
+                    _exporting ? null : (s) => setState(() => _mode = s.first),
+                style: ButtonStyle(
+                  visualDensity: VisualDensity.compact,
+                  padding: const WidgetStatePropertyAll(
+                    EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                  ),
+                  side: const WidgetStatePropertyAll(BorderSide.none),
+                  shape: WidgetStatePropertyAll(
+                    RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                  ),
+                  backgroundColor: WidgetStateProperty.resolveWith((states) {
+                    if (states.contains(WidgetState.selected)) return brand;
+                    return Colors.white;
+                  }),
+                  foregroundColor: WidgetStateProperty.resolveWith((states) {
+                    if (states.contains(WidgetState.selected)) return Colors.white;
+                    return brand;
+                  }),
+                  iconColor: WidgetStateProperty.resolveWith((states) {
+                    if (states.contains(WidgetState.selected)) return Colors.white;
+                    return brand;
+                  }),
+                  textStyle: const WidgetStatePropertyAll(
+                    TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+                  ),
                 ),
-                ButtonSegment(
-                  value: _EditorMode.highlight,
-                  label: Text('Highlight'),
-                  icon: Icon(Icons.draw, size: 18),
-                ),
-              ],
-              selected: {_mode},
-              onSelectionChanged:
-                  _exporting ? null : (s) => setState(() => _mode = s.first),
+              ),
             ),
             const SizedBox(height: 4),
             Text(
@@ -506,6 +538,16 @@ class _CaptureRegionEditorState extends State<CaptureRegionEditor> {
   }
 
   Widget _buildMetadataPanel() {
+    // Isolate from host app InputDecorationTheme (e.g. brand green borders).
+    const fieldBorder = OutlineInputBorder(
+      borderRadius: BorderRadius.all(Radius.circular(10)),
+      borderSide: BorderSide(color: Color(0xFF475569)),
+    );
+    const fieldFocused = OutlineInputBorder(
+      borderRadius: BorderRadius.all(Radius.circular(10)),
+      borderSide: BorderSide(color: Color(0xFF94A3B8), width: 1.2),
+    );
+
     return Material(
       color: const Color(0xFF1E293B),
       child: Padding(
@@ -534,16 +576,38 @@ class _CaptureRegionEditorState extends State<CaptureRegionEditor> {
                   style: const TextStyle(color: Colors.white60, fontSize: 12)),
             ],
             const SizedBox(height: 8),
-            TextField(
-              controller: _noteController,
-              maxLines: 2,
-              style: const TextStyle(color: Colors.white),
-              decoration: const InputDecoration(
-                labelText: 'What is wrong with this widget?',
-                labelStyle: TextStyle(color: Color(0xFF94A3B8)),
-                border: OutlineInputBorder(),
-                enabledBorder: OutlineInputBorder(
-                    borderSide: BorderSide(color: Color(0xFF334155))),
+            Theme(
+              data: ThemeData(
+                brightness: Brightness.dark,
+                useMaterial3: true,
+                inputDecorationTheme: const InputDecorationTheme(
+                  filled: true,
+                  fillColor: Color(0xFF0F172A),
+                  contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                  border: fieldBorder,
+                  enabledBorder: fieldBorder,
+                  focusedBorder: fieldFocused,
+                  disabledBorder: fieldBorder,
+                  errorBorder: fieldBorder,
+                  focusedErrorBorder: fieldFocused,
+                  labelStyle: TextStyle(color: Color(0xFF94A3B8), fontSize: 13),
+                  floatingLabelStyle: TextStyle(color: Color(0xFFCBD5E1), fontSize: 13),
+                  hintStyle: TextStyle(color: Color(0xFF64748B), fontSize: 13),
+                ),
+              ),
+              child: TextField(
+                controller: _noteController,
+                maxLines: 2,
+                cursorColor: const Color(0xFFE2E8F0),
+                style: const TextStyle(
+                  color: Color(0xFFF8FAFC),
+                  fontSize: 14,
+                  height: 1.35,
+                  fontWeight: FontWeight.w400,
+                ),
+                decoration: const InputDecoration(
+                  labelText: 'What is wrong with this widget?',
+                ),
               ),
             ),
           ],

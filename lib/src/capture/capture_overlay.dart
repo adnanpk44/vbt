@@ -52,7 +52,10 @@ class _VibeBugCaptureOverlayState extends State<VibeBugCaptureOverlay> {
   @override
   void initState() {
     super.initState();
-    unawaited(_loadBubbleOffset());
+    // Defer prefs until after the first frame so platform plugins are registered.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) unawaited(_loadBubbleOffset());
+    });
   }
 
   BuildContext? get _navContext =>
@@ -84,18 +87,27 @@ class _VibeBugCaptureOverlayState extends State<VibeBugCaptureOverlay> {
   }
 
   Future<void> _loadBubbleOffset() async {
-    final prefs = await SharedPreferences.getInstance();
-    final x = prefs.getDouble('${_bubblePositionKey}_x');
-    final y = prefs.getDouble('${_bubblePositionKey}_y');
-    if (x != null && y != null && mounted) {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final x = prefs.getDouble('${_bubblePositionKey}_x');
+      final y = prefs.getDouble('${_bubblePositionKey}_y');
+      if (x == null || y == null || !mounted) return;
+      // Ignore corrupt / absurd persisted values.
+      if (!x.isFinite || !y.isFinite) return;
       setState(() => _bubbleOffset = Offset(x, y));
+    } catch (_) {
+      // Keep default bubble position if prefs are unavailable (plugin not ready, etc.).
     }
   }
 
   Future<void> _saveBubbleOffset(Offset offset) async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setDouble('${_bubblePositionKey}_x', offset.dx);
-    await prefs.setDouble('${_bubblePositionKey}_y', offset.dy);
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setDouble('${_bubblePositionKey}_x', offset.dx);
+      await prefs.setDouble('${_bubblePositionKey}_y', offset.dy);
+    } catch (_) {
+      // Persistence is best-effort; drag still works in-session.
+    }
   }
 
   void _onBubbleMoved(Offset offset) {
