@@ -1,3 +1,11 @@
+## 0.4.5
+
+### Fixed
+- `dart run vibebug_flutter:configure` no longer gets confused by commented-out code or URL strings: detection now runs against a comment/string-aware scan of the file, so a leftover commented-out `main()` or `MaterialApp(...)` (e.g. from an earlier refactor) is never mistaken for a second real occurrence and no longer triggers a false "found 2" / "ambiguous" bail-out. `'https://...'` strings are also no longer mistaken for the start of a `//` comment.
+
+### Changed
+- README leads with the two-command quick start and documents that `configure` correctly ignores comments/strings while scanning.
+
 ## 0.4.4
 
 ### Fixed

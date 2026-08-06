@@ -132,6 +132,58 @@ void main() {
     expect(result.bailOutReason, contains('trailing code'));
   });
 
+  test('ignores a commented-out old main() left behind in the file', () {
+    // Reproduces a real integration failure: a leftover `// void main() {...}`
+    // from an earlier flavor/entry-point rewrite was being counted as a
+    // second real main() and triggering a false "found 2" bail-out.
+    const source = '''
+// void main() {
+//   runApp(const OldApp());
+// }
+
+void main() {
+  runApp(const MyApp());
+}
+''';
+    final result = transformMainDart(source);
+
+    expect(result.bailOutReason, isNull);
+    expect(result.changed, isTrue);
+    expect(result.output, contains('VibeBug.runGuarded('));
+  });
+
+  test('ignores an old main() inside a /* */ block comment', () {
+    const source = '''
+/*
+void main() {
+  runApp(const OldApp());
+}
+*/
+
+void main() {
+  runApp(const MyApp());
+}
+''';
+    final result = transformMainDart(source);
+
+    expect(result.bailOutReason, isNull);
+    expect(result.changed, isTrue);
+  });
+
+  test('a URL string containing // is not mistaken for a comment', () {
+    const source = '''
+void main() {
+  const baseUrl = 'https://vibebugtracker.com';
+  runApp(const MyApp());
+}
+''';
+    final result = transformMainDart(source);
+
+    expect(result.bailOutReason, isNull);
+    expect(result.changed, isTrue);
+    expect(result.output, contains("const baseUrl = 'https://vibebugtracker.com';"));
+  });
+
   test('bails out when there is no main() function', () {
     const source = '''
 class Foo {}

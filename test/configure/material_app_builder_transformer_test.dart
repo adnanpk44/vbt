@@ -156,6 +156,36 @@ CupertinoApp(
     expect(result.output, contains('VibeBugScope(child: CupertinoTheme(data: theme, child: child!))'));
   });
 
+  test('ignores a commented-out old MaterialApp() left behind in the file', () {
+    const source = '''
+// return MaterialApp(
+//   home: const OldHomePage(),
+// );
+
+MaterialApp(
+  home: const HomePage(),
+)
+''';
+    final result = transformMaterialAppBuilder(source);
+
+    expect(result.bailOutReason, isNull);
+    expect(result.changed, isTrue);
+  });
+
+  test('a baseUrl string containing // is not mistaken for a comment', () {
+    const source = '''
+MaterialApp(
+  title: 'https://vibebugtracker.com',
+  home: const HomePage(),
+)
+''';
+    final result = transformMaterialAppBuilder(source);
+
+    expect(result.bailOutReason, isNull);
+    expect(result.changed, isTrue);
+    expect(result.output, contains("title: 'https://vibebugtracker.com',"));
+  });
+
   test('bails out when no app root widget is found', () {
     const result = 'Widget build(BuildContext context) => const SizedBox();';
     final transformed = transformMaterialAppBuilder(result);

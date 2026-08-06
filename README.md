@@ -8,6 +8,15 @@ Crash reporting plus Chrome-extension-style **visual bug capture** for Flutter a
 
 Testers in your app can capture a widget, crop and highlight the region, add screenshots, and send a fully-described issue straight to your tracker board — no Chrome extension required.
 
+## Get started in two commands
+
+```sh
+flutter pub add vibebug_flutter
+dart run vibebug_flutter:configure
+```
+
+That's it — run your app. No manual code to write: `configure` finds and rewrites `main.dart` and your `MaterialApp`/`CupertinoApp`/`GetMaterialApp` itself, whatever your existing setup looks like (localization, theming, screen-size init — it wraps what's already there instead of replacing it). It always shows you the diff and asks before writing anything. See [Installation](#installation) below for details, flags, and what to do in the rare case it can't rewrite something safely.
+
 ## Features
 
 - **Zero-config setup** — one command wires everything into your app, no manual code required
@@ -51,7 +60,7 @@ It always shows a diff and asks for confirmation before writing anything. Useful
 | `--yes` | Skip the confirmation prompt |
 | `--base-url <url>` | Point at a self-hosted backend instead of the default `https://vibebugtracker.com` |
 
-It takes a `.bak` backup of every file it touches. If your `main.dart`/`MaterialApp` don't match one of the simple shapes it knows how to rewrite safely, it leaves a `// TODO(vibebug): ...` comment explaining what to do manually — see [Troubleshooting](#troubleshooting-configure).
+It takes a `.bak` backup of every file it touches. Comments and string contents (e.g. `'https://...'` URLs) are correctly ignored while scanning — leftover commented-out code (an old `main()`, an old `MaterialApp` from a previous refactor) is never mistaken for a second real one. If your `main.dart`/app root still don't match one of the shapes it knows how to rewrite safely, it leaves a `// TODO(vibebug): ...` comment explaining exactly what to do manually and why — see [Troubleshooting](#troubleshooting-configure).
 
 That's it — run your app. First launch shows a sign-in screen (tester/owner/admin email + password), then a project picker. Once a project is selected, every report from that device tracks against it until the user signs out (`VibeBug.signOut()`).
 
@@ -246,6 +255,8 @@ await VibeBug.reportIssueWithCaptures(
 | `VibeBug.runGuarded()` present but no `VibeBug.initialize()` inside it | Add `await VibeBug.initialize(VibeBugOptions(baseUrl: ...));` inside the `runGuarded` closure, before `runApp()`. |
 | Multiple/zero app root widgets (`MaterialApp`, `CupertinoApp`, `GetMaterialApp`) found | Wrap your app's `builder:` yourself, per the [Manual / advanced setup](#manual--advanced-setup) example above. |
 | `builder:`'s body has a shape this tool doesn't recognize (multiple return statements, an unusual parameter list, etc.) | Wrap whatever your `builder:` currently returns with `VibeBugScope(child: ...)` yourself. |
+
+Still stuck, or `configure` bailed for a reason not listed here? [Open an issue](https://github.com/adnanpk44/vbt/issues) with the exact message it printed — that's a gap in the tool, not something you're doing wrong, and it helps fix it for the next person too.
 
 ## Notes
 

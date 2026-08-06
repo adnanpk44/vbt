@@ -1,3 +1,4 @@
+import 'comment_stripper.dart';
 import 'dart_import_utils.dart';
 
 /// Result of attempting to wrap an app root widget's `builder:` with
@@ -54,8 +55,19 @@ final _trivialChildPattern = RegExp(r'^child(\s*\?\?\s*.+)?$', dotAll: true);
 /// single return value: multiple/zero app-root usages, multiple return
 /// statements in a block-bodied builder, or a builder with unrecognized
 /// parameter names.
+///
+/// All *detection* runs against a comment/string-literal-aware stripped
+/// copy of [source] (see [stripCommentsForScanning]), so commented-out code
+/// — an old `MaterialApp(...)` left behind, one shown in a doc comment —
+/// can never masquerade as a second real occurrence and trigger a false
+/// "ambiguous" bail-out. The stripped copy has identical length and newline
+/// positions to [source], so its offsets are always valid for slicing the
+/// *real* text back out (including any real comments inside the builder)
+/// when building the output.
 MaterialAppTransformResult transformMaterialAppBuilder(String source) {
-  final appMatches = _appRootPattern.allMatches(source).toList();
+  final scan = stripCommentsForScanning(source);
+
+  final appMatches = _appRootPattern.allMatches(scan).toList();
   if (appMatches.isEmpty) {
     return const MaterialAppTransformResult.bailOut(
       'no MaterialApp(...), CupertinoApp(...), or GetMaterialApp(...) found in this file',
@@ -70,7 +82,7 @@ MaterialAppTransformResult transformMaterialAppBuilder(String source) {
   final appName = match.group(1)!;
   final isRouter = match.group(2) != null;
   final openParenIndex = match.end - 1;
-  final closeParenIndex = _findMatchingParen(source, openParenIndex);
+  final closeParenIndex = _findMatchingParen(scan, openParenIndex);
   if (closeParenIndex == -1) {
     return MaterialAppTransformResult.bailOut(
       'could not find the end of $appName(...) — unbalanced parens',
@@ -79,24 +91,26 @@ MaterialAppTransformResult transformMaterialAppBuilder(String source) {
 
   final argsStart = openParenIndex + 1;
   final args = source.substring(argsStart, closeParenIndex);
+  final scanArgs = scan.substring(argsStart, closeParenIndex);
 
-  if (args.contains('VibeBugScope(')) {
+  if (scanArgs.contains('VibeBugScope(')) {
     return const MaterialAppTransformResult.alreadyConfigured();
   }
 
-  final navKeyMatch = _navigatorKeyPattern.firstMatch(args);
+  final navKeyMatch = _navigatorKeyPattern.firstMatch(scanArgs);
   final navKeyArg = navKeyMatch == null ? '' : 'navigatorKey: ${navKeyMatch.group(1)}, ';
 
   String newArgs;
-  final builderMatch = _builderPattern.firstMatch(args);
+  final builderMatch = _builderPattern.firstMatch(scanArgs);
   if (builderMatch == null) {
     final replacement =
         'builder: (context, child) => VibeBugScope(${navKeyArg}child: child ?? const SizedBox.shrink())';
     newArgs = '\n  $replacement,$args';
   } else {
-    final argEnd = _findArgEnd(args, builderMatch.start);
+    final argEnd = _findArgEnd(scanArgs, builderMatch.start);
     final argSpan = args.substring(builderMatch.start, argEnd);
-    final rewritten = _rewriteBuilderArg(argSpan, navKeyArg);
+    final scanArgSpan = scanArgs.substring(builderMatch.start, argEnd);
+    final rewritten = _rewriteBuilderArg(argSpan, scanArgSpan, navKeyArg);
     if (rewritten == null) {
       return MaterialAppTransformResult.bailOut(
         '$appName\'s builder: has a shape this tool doesn\'t recognize (expected '
@@ -125,14 +139,20 @@ MaterialAppTransformResult transformMaterialAppBuilder(String source) {
 /// `builder: (context, child) { ... }` argument span (as isolated by
 /// [_findArgEnd], so it has no trailing comma) to wrap its return value
 /// with `VibeBugScope`. Returns null if the shape isn't recognized.
-String? _rewriteBuilderArg(String argSpan, String navKeyArg) {
-  final headMatch = _builderHeadPattern.firstMatch(argSpan);
+///
+/// [argSpan] is the real source text (used to build the output, preserving
+/// any real comments); [scanArgSpan] is the same span from the
+/// comment-stripped copy, at identical offsets, used only to decide
+/// structure (where the arrow/brace/return/statement boundaries are).
+String? _rewriteBuilderArg(String argSpan, String scanArgSpan, String navKeyArg) {
+  final headMatch = _builderHeadPattern.firstMatch(scanArgSpan);
   if (headMatch == null) return null;
 
   if (headMatch.group(1) == '=>') {
     final expr = argSpan.substring(headMatch.end).trim();
+    final scanExpr = scanArgSpan.substring(headMatch.end).trim();
     if (expr.isEmpty) return null;
-    return 'builder: (context, child) => ${_wrapExpr(expr, navKeyArg)}';
+    return 'builder: (context, child) => ${_wrapExpr(expr, scanExpr, navKeyArg)}';
   }
 
   // Block body: `builder: (context, child) { ... }`. headMatch consumed the
@@ -141,31 +161,33 @@ String? _rewriteBuilderArg(String argSpan, String navKeyArg) {
   // conditional returns) is ambiguous about which value becomes the app's
   // actual widget, so it's left for the developer to wrap manually.
   final openBraceIndex = headMatch.end - 1;
-  final closeBraceIndex = _findMatchingBrace(argSpan, openBraceIndex);
+  final closeBraceIndex = _findMatchingBrace(scanArgSpan, openBraceIndex);
   if (closeBraceIndex == -1) return null;
 
   final body = argSpan.substring(openBraceIndex + 1, closeBraceIndex);
-  final returnStarts = _findTopLevelReturnStarts(body);
+  final scanBody = scanArgSpan.substring(openBraceIndex + 1, closeBraceIndex);
+  final returnStarts = _findTopLevelReturnStarts(scanBody);
   if (returnStarts.length != 1) return null;
 
   final returnStart = returnStarts.first;
   var exprStart = returnStart + 'return'.length;
-  while (exprStart < body.length && body[exprStart].trim().isEmpty) {
+  while (exprStart < scanBody.length && scanBody[exprStart].trim().isEmpty) {
     exprStart++;
   }
-  final stmtEnd = _findStatementEnd(body, exprStart);
+  final stmtEnd = _findStatementEnd(scanBody, exprStart);
   if (stmtEnd == -1) return null;
 
   final expr = body.substring(exprStart, stmtEnd).trim();
+  final scanExpr = scanBody.substring(exprStart, stmtEnd).trim();
   if (expr.isEmpty) return null;
 
   final newBody =
-      '${body.substring(0, returnStart)}return ${_wrapExpr(expr, navKeyArg)};${body.substring(stmtEnd + 1)}';
+      '${body.substring(0, returnStart)}return ${_wrapExpr(expr, scanExpr, navKeyArg)};${body.substring(stmtEnd + 1)}';
   return 'builder: (context, child) {$newBody}';
 }
 
-String _wrapExpr(String expr, String navKeyArg) {
-  if (_trivialChildPattern.hasMatch(expr)) {
+String _wrapExpr(String expr, String scanExpr, String navKeyArg) {
+  if (_trivialChildPattern.hasMatch(scanExpr)) {
     return 'VibeBugScope(${navKeyArg}child: child ?? const SizedBox.shrink())';
   }
   return 'VibeBugScope(${navKeyArg}child: $expr)';

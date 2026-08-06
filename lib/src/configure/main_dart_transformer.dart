@@ -1,3 +1,4 @@
+import 'comment_stripper.dart';
 import 'dart_import_utils.dart';
 
 /// Result of attempting to rewrite `main.dart` to wire in VibeBug.
@@ -51,11 +52,22 @@ final _runAppPattern = RegExp(r'runApp\s*\(');
 /// safely: multiple/zero `main()` functions, multiple/zero `runApp(...)`
 /// calls, `runApp(...)` nested inside another callback, or trailing code
 /// chained onto the `runApp(...)` statement (e.g. `.then(...)`).
+///
+/// All *detection* (finding `main()`, `runApp(...)`, counting braces, etc.)
+/// runs against a comment/string-literal-aware stripped copy of [source]
+/// (see [stripCommentsForScanning]) so commented-out code — an old `main()`
+/// left behind, a `// runApp(...)` in a doc example — can never masquerade
+/// as a second real occurrence and trigger a false "ambiguous" bail-out.
+/// The stripped copy has identical length and newline positions to
+/// [source], so its offsets are always valid for slicing the *real* text
+/// back out when building the output.
 MainDartTransformResult transformMainDart(
   String source, {
   String configImportPath = 'vibebug_config.dart',
 }) {
-  final mainMatches = _mainFnPattern.allMatches(source).toList();
+  final scan = stripCommentsForScanning(source);
+
+  final mainMatches = _mainFnPattern.allMatches(scan).toList();
   if (mainMatches.length != 1) {
     return MainDartTransformResult.bailOut(
       'expected exactly one top-level main() function, found ${mainMatches.length}',
@@ -63,7 +75,7 @@ MainDartTransformResult transformMainDart(
   }
   final mainMatch = mainMatches.first;
   final openBraceIndex = mainMatch.end - 1;
-  final closeBraceIndex = _findMatchingBrace(source, openBraceIndex);
+  final closeBraceIndex = _findMatchingBrace(scan, openBraceIndex);
   if (closeBraceIndex == -1) {
     return const MainDartTransformResult.bailOut(
       'could not find the end of main() — unbalanced braces',
@@ -72,9 +84,10 @@ MainDartTransformResult transformMainDart(
 
   final bodyStart = openBraceIndex + 1;
   final body = source.substring(bodyStart, closeBraceIndex);
+  final scanBody = scan.substring(bodyStart, closeBraceIndex);
 
-  if (body.contains('VibeBug.runGuarded(')) {
-    if (body.contains('VibeBug.initialize(')) {
+  if (scanBody.contains('VibeBug.runGuarded(')) {
+    if (scanBody.contains('VibeBug.initialize(')) {
       return const MainDartTransformResult.alreadyConfigured();
     }
     return const MainDartTransformResult.bailOut(
@@ -84,7 +97,7 @@ MainDartTransformResult transformMainDart(
     );
   }
 
-  final runAppMatches = _runAppPattern.allMatches(body).toList();
+  final runAppMatches = _runAppPattern.allMatches(scanBody).toList();
   if (runAppMatches.length != 1) {
     return MainDartTransformResult.bailOut(
       'expected exactly one runApp(...) call inside main(), found ${runAppMatches.length}',
@@ -94,7 +107,7 @@ MainDartTransformResult transformMainDart(
 
   var depth = 0;
   for (var i = 0; i < runAppMatch.start; i++) {
-    final ch = body[i];
+    final ch = scanBody[i];
     if (ch == '(' || ch == '{' || ch == '[') depth++;
     if (ch == ')' || ch == '}' || ch == ']') depth--;
   }
@@ -105,29 +118,29 @@ MainDartTransformResult transformMainDart(
   }
 
   final runAppParenIndex = runAppMatch.end - 1;
-  final runAppArgsEnd = _findMatchingParen(body, runAppParenIndex);
+  final runAppArgsEnd = _findMatchingParen(scanBody, runAppParenIndex);
   if (runAppArgsEnd == -1) {
     return const MainDartTransformResult.bailOut(
       'could not find the end of the runApp(...) call — unbalanced parens',
     );
   }
   var trailing = runAppArgsEnd + 1;
-  while (trailing < body.length && body[trailing].trim().isEmpty) {
+  while (trailing < scanBody.length && scanBody[trailing].trim().isEmpty) {
     trailing++;
   }
-  if (trailing >= body.length || body[trailing] != ';') {
+  if (trailing >= scanBody.length || scanBody[trailing] != ';') {
     return const MainDartTransformResult.bailOut(
       'runApp() has unexpected trailing code (e.g. .then(...)); wire VibeBug manually',
     );
   }
 
-  var lineStart = body.lastIndexOf('\n', runAppMatch.start);
+  var lineStart = scanBody.lastIndexOf('\n', runAppMatch.start);
   lineStart = lineStart == -1 ? 0 : lineStart + 1;
-  final indentMatch = RegExp(r'^[ \t]*').firstMatch(body.substring(lineStart))!;
+  final indentMatch = RegExp(r'^[ \t]*').firstMatch(scanBody.substring(lineStart))!;
   final indent = indentMatch.group(0)!;
 
   final insertion = StringBuffer();
-  if (!_ensureInitializedPattern.hasMatch(body)) {
+  if (!_ensureInitializedPattern.hasMatch(scanBody)) {
     insertion.write('$indent' r'WidgetsFlutterBinding.ensureInitialized();' '\n');
   }
   insertion.write(
