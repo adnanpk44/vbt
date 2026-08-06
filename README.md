@@ -20,7 +20,7 @@ That's it — run your app. No manual code to write: `configure` finds and rewri
 ## Features
 
 - **Zero-config setup** — one command wires everything into your app, no manual code required
-- **Built-in sign-in + project picker** — first launch shows a login screen, then a project dropdown; from then on issues are tracked against that project automatically
+- **Built-in sign-in + project picker** — your app runs normally from launch; the first time a tester taps the floating Report button, they see a login screen, then a project dropdown, and every report after that tracks against it automatically
 - **Automatic crash reporting** — uncaught exceptions, `FlutterError.onError`, and platform errors are reported with stack traces
 - **Offline queue** — reports are queued and retried when connectivity returns, with de-duplication
 - **Draggable Report button** — testers can move the bubble anywhere on screen
@@ -62,7 +62,9 @@ It always shows a diff and asks for confirmation before writing anything. Useful
 
 It takes a `.bak` backup of every file it touches. Comments and string contents (e.g. `'https://...'` URLs) are correctly ignored while scanning — leftover commented-out code (an old `main()`, an old `MaterialApp` from a previous refactor) is never mistaken for a second real one. If your `main.dart`/app root still don't match one of the shapes it knows how to rewrite safely, it leaves a `// TODO(vibebug): ...` comment explaining exactly what to do manually and why — see [Troubleshooting](#troubleshooting-configure).
 
-That's it — run your app. First launch shows a sign-in screen (tester/owner/admin email + password), then a project picker. Once a project is selected, every report from that device tracks against it until the user signs out (`VibeBug.signOut()`).
+That's it — run your app. It launches straight into your normal UI, exactly as before — nothing is blocked. The first time a tester taps the floating **Report** button, they see a sign-in screen (tester/owner/admin email + password), then a project picker; back out of either and nothing happens. Once a project is selected, every report from that device tracks against it until the user signs out (`VibeBug.signOut()`), and tapping Report goes straight into capture mode.
+
+If you'd rather block the whole app behind sign-in until it's ready — appropriate for a dedicated tester app whose only purpose is reporting — pass `VibeBugOptions(blockAppUntilReady: true)`. See [Gate behavior](#gate-behavior) below.
 
 ## Example app
 
@@ -87,7 +89,7 @@ It exercises crash reporting, caught exceptions, the draggable capture bubble, w
 │        ▼                                                     │
 │  VibeBugScope (wraps MaterialApp.builder)                    │
 │   │ • floating Report bubble (draggable)                     │
-│   │ • sign-in gate + project picker on first launch          │
+│   │ • sign-in + project picker gate, on first Report tap     │
 │   │ • widget hit-testing for selectors                       │
 │        ▼                                                     │
 │  VibeBug.initialize(VibeBugOptions(...))                     │
@@ -168,13 +170,25 @@ MaterialApp.router(
 ```
 
 1. **Drag** the bubble to reposition it (position is remembered)
-2. **Tap** the bubble → tap a widget to capture it
-3. **Crop / highlight** in the full-screen editor, add a per-capture note, then **Save**
-4. Navigate to other screens freely, tap **Report** again to add more (up to 8)
-5. Tap the **badge** on the bubble, then sign in with the tester account if needed
-6. Select the project, board, developer, and priority for this issue, then **Send**
+2. **Tap** the bubble — the first time, this is where sign-in and project selection happen (see [Gate behavior](#gate-behavior)); after that it goes straight to step 3
+3. **Tap a widget** to capture it
+4. **Crop / highlight** in the full-screen editor, add a per-capture note, then **Save**
+5. Navigate to other screens freely, tap **Report** again to add more (up to 8)
+6. Tap the **badge** on the bubble to review, choose the board/developer/priority, then **Send**
 
 Long-press the bubble to clear draft captures.
+
+## Gate behavior
+
+`VibeBugOptions.blockAppUntilReady` controls *when* the built-in sign-in/project-picker flow appears, for apps using the gate (i.e. not supplying `email`/`password`/`token` directly):
+
+| | `blockAppUntilReady: false` (default) | `blockAppUntilReady: true` |
+|---|---|---|
+| On launch | Your app shows immediately, unchanged | Blocked behind sign-in/picker until both are done |
+| Sign-in/picker appear | The first time the tester taps **Report** | Before your app is shown at all |
+| Best for | Embedding into an existing app with its own regular users (most apps — this is the default for exactly that reason) | A dedicated tester app whose only purpose is reporting |
+
+Regular users of your app who never tap Report never see a VibeBug screen at all under the default setting — nothing about your app's normal UI changes.
 
 ## Options
 
@@ -195,6 +209,7 @@ Long-press the bubble to clear draft captures.
 | `onError` | `null` | Callback for send/queue errors |
 | `enableAuthGate` | `null` | Auto-detect: on when no creds supplied, off otherwise |
 | `autoSelectSoleProject` | `false` | Skip picker when sign-in resolves to exactly one project |
+| `blockAppUntilReady` | `false` | `true` blocks the whole app behind the gate on launch instead of gating the Report button — see [Gate behavior](#gate-behavior) |
 
 ## API
 

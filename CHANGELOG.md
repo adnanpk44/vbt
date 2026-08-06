@@ -1,3 +1,8 @@
+## 0.4.6
+
+### Changed
+- **The gate's default behavior changed**: it no longer blocks your whole app behind a sign-in screen on launch. Your app now shows immediately as normal, and the sign-in + project-picker flow appears the first time a tester taps the floating Report button — the right default for embedding into an existing app that has its own regular users (who should never see a VibeBug screen at all). The old block-the-whole-app behavior is still available via the new `VibeBugOptions.blockAppUntilReady: true`, for dedicated tester apps.
+
 ## 0.4.5
 
 ### Fixed

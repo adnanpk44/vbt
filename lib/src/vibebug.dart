@@ -66,6 +66,17 @@ class VibeBug {
   static bool get autoSelectSoleProject =>
       _options?.autoSelectSoleProject ?? false;
 
+  /// Whether the gate blocks the whole app on startup, vs. only prompting
+  /// when the Report button is first tapped. See
+  /// [VibeBugOptions.blockAppUntilReady].
+  static bool get blockAppUntilReady => _options?.blockAppUntilReady ?? false;
+
+  /// Whether the on-demand gate (tapping Report) still needs to run: the
+  /// gate is enabled but the app isn't blocking on startup, and either
+  /// sign-in or project selection hasn't happened yet.
+  static bool get needsOnDemandGate =>
+      _gateEnabled && !blockAppUntilReady && (!isAuthenticated || _projectId == null);
+
   /// Notifies listeners whenever sign-in/sign-out/project-selection state
   /// changes, so [VibeBugScope] can rebuild without a StatefulWidget of its
   /// own tracking auth state.

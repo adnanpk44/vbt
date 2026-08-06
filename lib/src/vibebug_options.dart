@@ -18,6 +18,7 @@ class VibeBugOptions {
     this.onError,
     this.enableAuthGate,
     this.autoSelectSoleProject = false,
+    this.blockAppUntilReady = false,
   });
 
   final String baseUrl;
@@ -52,4 +53,18 @@ class VibeBugOptions {
   /// tester-accessible project, skip the project-picker screen and select it
   /// automatically instead of asking the user to confirm.
   final bool autoSelectSoleProject;
+
+  /// How the gate shows itself when [enableAuthGate] is on.
+  ///
+  /// Defaults to `false`: the app runs normally from launch, and the SDK's
+  /// sign-in/project-picker screens only appear the first time the tester
+  /// taps the floating Report button — the right default when embedding
+  /// this SDK into an existing app that has its own regular users, who
+  /// should never see a VibeBug login screen at all.
+  ///
+  /// Set to `true` to block [VibeBugScope]'s `child` behind the gate until
+  /// sign-in and project selection are both complete, before the app is
+  /// shown at all — appropriate for a dedicated tester app whose only
+  /// purpose is reporting issues.
+  final bool blockAppUntilReady;
 }

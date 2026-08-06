@@ -125,9 +125,14 @@ class _VibeBugCaptureOverlayState extends State<VibeBugCaptureOverlay> {
     unawaited(_saveBubbleOffset(offset));
   }
 
-  void _startPicking() {
+  Future<void> _startPicking() async {
     if (!widget.enabled || !VibeBug.isInitialized || _capturing || _picking) {
       return;
+    }
+
+    if (VibeBug.needsOnDemandGate) {
+      final ready = await _ensureReadyToReport();
+      if (!ready || !mounted) return;
     }
 
     final overlay = _navigatorOverlay;
@@ -151,6 +156,54 @@ class _VibeBugCaptureOverlayState extends State<VibeBugCaptureOverlay> {
       },
     );
     overlay.insert(_pickerOverlay!);
+  }
+
+  /// Runs the on-demand sign-in/project-picker flow the first time the
+  /// Report button is tapped (see [VibeBugOptions.blockAppUntilReady]),
+  /// pushing full-screen routes on the host app's own Navigator — unlike
+  /// [VibeBugScope]'s startup gate, there's a real Navigator/Overlay here
+  /// already, since the app is already running normally.
+  ///
+  /// Returns false if the user backs out of either screen (cancelled sign-in,
+  /// or signed out from the picker) without completing it.
+  Future<bool> _ensureReadyToReport() async {
+    final navState = widget.navigatorKey?.currentState ?? Navigator.maybeOf(context);
+    if (navState == null) {
+      _showSnack('Could not open sign-in. Pass navigatorKey to VibeBugScope.');
+      return false;
+    }
+
+    if (!VibeBug.isAuthenticated) {
+      final signedIn = await navState.push<bool>(
+        MaterialPageRoute(
+          builder: (routeContext) => VibeBugLoginScreen(
+            onSignedIn: (_) => Navigator.of(routeContext).pop(true),
+          ),
+        ),
+      );
+      if (signedIn != true || !mounted) return false;
+    }
+
+    if (VibeBug.selectedProjectId == null) {
+      final selected = await navState.push<bool>(
+        MaterialPageRoute(
+          builder: (routeContext) => VibeBugProjectPickerScreen(
+            projects: VibeBug.projects,
+            onProjectSelected: (id) async {
+              await VibeBug.selectProject(id);
+              if (routeContext.mounted) Navigator.of(routeContext).pop(true);
+            },
+            onSignOut: () async {
+              await VibeBug.signOut();
+              if (routeContext.mounted) Navigator.of(routeContext).pop(false);
+            },
+          ),
+        ),
+      );
+      if (selected != true || !mounted) return false;
+    }
+
+    return true;
   }
 
   void _stopPicking() {
@@ -1258,7 +1311,7 @@ class _VibeBugScopeState extends State<VibeBugScope> {
     return AnimatedBuilder(
       animation: VibeBug.listenable,
       builder: (context, _) {
-        if (VibeBug.isGateEnabled) {
+        if (VibeBug.isGateEnabled && VibeBug.blockAppUntilReady) {
           final stage = resolveGateStage(
             gateEnabled: true,
             authenticated: VibeBug.isAuthenticated,
