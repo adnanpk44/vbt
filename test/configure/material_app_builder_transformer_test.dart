@@ -194,6 +194,98 @@ MaterialApp(
     expect(transformed.bailOutReason, contains('no MaterialApp'));
   });
 
+  test('threads a property-chain navigatorKey (e.g. service.navigatorKey)', () {
+    const source = '''
+MaterialApp(
+  navigatorKey: NavigatorService.navigatorKey,
+  home: const HomePage(),
+)
+''';
+    final result = transformMaterialAppBuilder(source);
+
+    expect(result.changed, isTrue);
+    expect(
+      result.output,
+      contains('VibeBugScope(navigatorKey: NavigatorService.navigatorKey,'),
+    );
+  });
+
+  test('picks the app root that has a navigatorKey when several exist', () {
+    const source = '''
+class PiPCallWidget extends StatelessWidget {
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      debugShowCheckedModeBanner: false,
+      home: Scaffold(body: Center(child: Text('PiP'))),
+    );
+  }
+}
+
+Widget buildRoot() {
+  return MaterialApp(
+    navigatorKey: NavigatorService.navigatorKey,
+    home: const HomePage(),
+  );
+}
+''';
+    final result = transformMaterialAppBuilder(source);
+
+    expect(result.bailOutReason, isNull);
+    expect(result.changed, isTrue);
+    // The PiP app must be untouched; only the navigatorKey-bearing root gets
+    // the VibeBugScope builder.
+    final output = result.output!;
+    expect(output, contains("Center(child: Text('PiP'))"));
+    expect(output, contains('navigatorKey: NavigatorService.navigatorKey,'));
+    expect(output, contains('VibeBugScope(navigatorKey: NavigatorService.navigatorKey,'));
+  });
+
+  test('ignores nested builder: inside routes/onGenerateRoute when finding the app builder', () {
+    // Regression: a `builder:` nested inside `routes: { ... }` or
+    // `onGenerateRoute:` (e.g. MaterialPageRoute(builder: ...)) used to be
+    // picked up first, making the tool think the app root's builder: was
+    // somewhere else and bail out.
+    const source = '''
+MaterialApp(
+  navigatorKey: NavigatorService.navigatorKey,
+  onGenerateRoute: (settings) {
+    return MaterialPageRoute(
+      settings: settings,
+      builder: (context) => const HomePage(),
+    );
+  },
+  routes: {
+    '/message_received': (context) => MaterialPageRoute(
+      builder: (context) => const ChatRoomScreen(),
+    ),
+  },
+  builder: (context, child) {
+    final overlay = overlayForTheme();
+    return AnnotatedRegion<SystemUiOverlayStyle>(
+      value: overlay,
+      child: Column(
+        children: [
+          const OngoingCallBannerV2(),
+          Expanded(child: child ?? const SizedBox.shrink()),
+        ],
+      ),
+    );
+  },
+  home: const HomePage(),
+)
+''';
+    final result = transformMaterialAppBuilder(source);
+
+    expect(result.bailOutReason, isNull);
+    expect(result.changed, isTrue);
+    final output = result.output!;
+    // The app's own builder return value is wrapped.
+    expect(output, contains('return VibeBugScope(navigatorKey: NavigatorService.navigatorKey, child: AnnotatedRegion<SystemUiOverlayStyle>('));
+    // The nested route builders are left untouched.
+    expect(output, contains('builder: (context) => const HomePage(),'));
+    expect(output, contains('builder: (context) => const ChatRoomScreen(),'));
+  });
+
   test('bails out when multiple app root widgets are found', () {
     const source = '''
 Widget buildA() => MaterialApp(home: const A());

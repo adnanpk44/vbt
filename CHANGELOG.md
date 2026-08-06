@@ -1,3 +1,10 @@
+## 0.4.7
+
+### Fixed
+- `dart run vibebug_flutter:configure` now wires `VibeBugScope` into apps with multiple `MaterialApp`/`CupertinoApp` roots (e.g. a main app plus a Picture-in-Picture widget): it picks the root that threads a `navigatorKey` instead of bailing out as "ambiguous".
+- The configure tool no longer mistakes a `builder:` nested inside `routes:` / `onGenerateRoute:` for the app root's own `builder:` — the real app builder is found and wrapped, and nested route builders are left untouched.
+- `navigatorKey: SomeService.navigatorKey` property chains are threaded into `VibeBugScope` correctly (previously only the first identifier was captured, producing `navigatorKey: SomeService`).
+
 ## 0.4.6
 
 ### Changed

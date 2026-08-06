@@ -34,7 +34,9 @@ class MaterialAppTransformResult {
 // works for all of them.
 final _appRootPattern =
     RegExp(r'\b(MaterialApp|CupertinoApp|GetMaterialApp|GetCupertinoApp)(\.router)?\s*\(');
-final _navigatorKeyPattern = RegExp(r'navigatorKey\s*:\s*([A-Za-z_]\w*)');
+final _navigatorKeyPattern = RegExp(
+  r'navigatorKey\s*:\s*([A-Za-z_]\w*(?:\s*\.\s*[A-Za-z_]\w*)*)',
+);
 final _builderPattern = RegExp(r'\bbuilder\s*:');
 final _builderHeadPattern = RegExp(
   r'^builder\s*:\s*\(\s*context\s*,\s*child\s*\)\s*(=>|\{)',
@@ -73,12 +75,27 @@ MaterialAppTransformResult transformMaterialAppBuilder(String source) {
       'no MaterialApp(...), CupertinoApp(...), or GetMaterialApp(...) found in this file',
     );
   }
+  var match = appMatches.first;
   if (appMatches.length > 1) {
-    return const MaterialAppTransformResult.bailOut(
-      'multiple app root widgets found in this file; ambiguous',
-    );
+    // Multiple app roots (e.g. a main app plus a Picture-in-Picture widget
+    // with its own MaterialApp, or a preview/entry-point variant): pick the
+    // one that threads a navigatorKey — that is almost always the app's real
+    // root — and treat the rest as secondary. Only bail out if that doesn't
+    // narrow it down to exactly one.
+    final withNavigatorKey = appMatches.where((m) {
+      final closeParen = _findMatchingParen(scan, m.end - 1);
+      if (closeParen == -1) return false;
+      final args = scan.substring(m.end - 1, closeParen);
+      return _navigatorKeyPattern.hasMatch(args);
+    }).toList();
+    if (withNavigatorKey.length == 1) {
+      match = withNavigatorKey.first;
+    } else {
+      return const MaterialAppTransformResult.bailOut(
+        'multiple app root widgets found in this file; ambiguous',
+      );
+    }
   }
-  final match = appMatches.first;
   final appName = match.group(1)!;
   final isRouter = match.group(2) != null;
   final openParenIndex = match.end - 1;
@@ -101,7 +118,7 @@ MaterialAppTransformResult transformMaterialAppBuilder(String source) {
   final navKeyArg = navKeyMatch == null ? '' : 'navigatorKey: ${navKeyMatch.group(1)}, ';
 
   String newArgs;
-  final builderMatch = _builderPattern.firstMatch(scanArgs);
+  final builderMatch = _findTopLevelBuilder(scanArgs);
   if (builderMatch == null) {
     final replacement =
         'builder: (context, child) => VibeBugScope(${navKeyArg}child: child ?? const SizedBox.shrink())';
@@ -133,6 +150,35 @@ MaterialAppTransformResult transformMaterialAppBuilder(String source) {
   newSource = ensureImport(newSource, 'package:vibebug_flutter/vibebug_flutter.dart');
 
   return MaterialAppTransformResult.success(newSource, warnings: warnings);
+}
+
+/// Finds the `builder:` named argument that belongs to the app root widget
+/// itself — i.e. the one sitting at argument depth 0 of [args] — rather than
+/// one nested inside another widget's argument list (`routes: { ... }`,
+/// `onGenerateRoute: (settings) => MaterialPageRoute(builder: ...)`, etc.).
+/// Returns null when the app root has no `builder:` of its own.
+Match? _findTopLevelBuilder(String args) {
+  var depth = 0;
+  var i = 0;
+  while (i < args.length) {
+    final ch = args[i];
+    if (ch == '(' || ch == '{' || ch == '[') {
+      depth++;
+      i++;
+      continue;
+    }
+    if (ch == ')' || ch == '}' || ch == ']') {
+      depth--;
+      i++;
+      continue;
+    }
+    if (depth == 0) {
+      final m = _builderPattern.matchAsPrefix(args, i);
+      if (m != null) return m;
+    }
+    i++;
+  }
+  return null;
 }
 
 /// Rewrites a single `builder: (context, child) => ...` or
