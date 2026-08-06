@@ -1,3 +1,8 @@
+## 0.4.2
+
+### Changed
+- Upgrade `flutter_secure_storage` from `^9.2.4` to `^10.0.0` (resolves version conflicts in apps already on the v10 API, e.g. `flutter_secure_storage ^10.0.0-beta.5`). Token read/write/delete API is unchanged.
+
 ## 0.4.1
 
 ### Added
