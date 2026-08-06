@@ -1,9 +1,16 @@
 name: vibebug_flutter
-description: Crash and exception reporting for Flutter apps — sends issues to Vibe Bug Tracker.
+description: Crash reporting and visual bug capture for Flutter apps — reports issues to Vibe Bug Tracker with screenshots, widget selectors, and an offline queue.
 version: 0.4.0
 homepage: https://vibebugtracker.com
-repository: https://github.com/adnanpk44/visualIssueTracker
-issue_tracker: https://github.com/adnanpk44/visualIssueTracker/issues
+repository: https://github.com/adnanpk44/vbt
+issue_tracker: https://github.com/adnanpk44/vbt/issues
+documentation: https://vibebugtracker.com/docs/flutter
+topics:
+  - flutter
+  - crash-reporting
+  - bug-tracking
+  - debugging
+  - visual-bug-reporting
 
 environment:
   sdk: '>=3.2.0 <4.0.0'
