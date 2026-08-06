@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -7,6 +8,10 @@ import 'package:uuid/uuid.dart';
 
 import '../vibebug.dart';
 import '../api_client.dart';
+import '../onboarding/vibebug_auth_gate.dart';
+import '../onboarding/vibebug_auth_widgets.dart';
+import '../onboarding/vibebug_login_screen.dart';
+import '../onboarding/vibebug_project_picker_screen.dart';
 import 'capture_models.dart';
 import 'capture_region_editor.dart';
 import 'screenshot_capture.dart';
@@ -503,8 +508,6 @@ class _SubmitIssueSheet extends StatefulWidget {
 class _SubmitIssueSheetState extends State<_SubmitIssueSheet> {
   late List<VibeBugScreenshotShot> _shots;
   late final TextEditingController _summaryController;
-  late final TextEditingController _emailController;
-  late final TextEditingController _passwordController;
   final Map<String, TextEditingController> _descControllers = {};
   List<VibeBugProject> _projects = const [];
   List<VibeBugBoard> _boards = const [];
@@ -514,7 +517,6 @@ class _SubmitIssueSheetState extends State<_SubmitIssueSheet> {
   String? _developerId;
   String _priority = 'medium';
   bool _loadingTarget = false;
-  bool _signingIn = false;
   String? _error;
 
   @override
@@ -524,8 +526,6 @@ class _SubmitIssueSheetState extends State<_SubmitIssueSheet> {
     _summaryController = TextEditingController(
       text: _shots.isNotEmpty ? _shots.first.description : '',
     );
-    _emailController = TextEditingController();
-    _passwordController = TextEditingController();
     for (final shot in _shots) {
       _descControllers[shot.id] = TextEditingController(text: shot.description);
     }
@@ -535,8 +535,6 @@ class _SubmitIssueSheetState extends State<_SubmitIssueSheet> {
   @override
   void dispose() {
     _summaryController.dispose();
-    _emailController.dispose();
-    _passwordController.dispose();
     for (final c in _descControllers.values) {
       c.dispose();
     }
@@ -644,10 +642,8 @@ class _SubmitIssueSheetState extends State<_SubmitIssueSheet> {
 
   Future<void> _hydrateTargetOptions() async {
     setState(() {
-      _projects = VibeBug.projects
-          .where((project) => project.role == 'tester')
-          .toList();
-      if (_projects.isEmpty) _projects = VibeBug.projects;
+      // VibeBug.projects is already canActAsTester-filtered at the source.
+      _projects = VibeBug.projects;
       _projectId = VibeBug.selectedProjectId ??
           (_projects.isNotEmpty ? _projects.first.id : null);
       _boards = VibeBug.boards;
@@ -660,31 +656,6 @@ class _SubmitIssueSheetState extends State<_SubmitIssueSheet> {
     if (_projectId != null &&
         _projects.any((project) => project.id == _projectId)) {
       await _changeProject(_projectId!, showLoading: false);
-    }
-  }
-
-  Future<void> _signIn() async {
-    final email = _emailController.text.trim();
-    final password = _passwordController.text;
-    if (email.isEmpty || password.isEmpty) {
-      setState(() => _error = 'Enter tester email and password.');
-      return;
-    }
-    setState(() {
-      _signingIn = true;
-      _error = null;
-    });
-    try {
-      await VibeBug.signIn(email: email, password: password);
-      if (!mounted) return;
-      setState(() => _signingIn = false);
-      await _hydrateTargetOptions();
-    } catch (e) {
-      if (!mounted) return;
-      setState(() {
-        _signingIn = false;
-        _error = 'Sign in failed: $e';
-      });
     }
   }
 
@@ -782,7 +753,6 @@ class _SubmitIssueSheetState extends State<_SubmitIssueSheet> {
               FilledButton(
                 onPressed: widget.submitting ||
                         _loadingTarget ||
-                        _signingIn ||
                         !VibeBug.isAuthenticated
                     ? null
                     : _trySend,
@@ -915,39 +885,9 @@ class _SubmitIssueSheetState extends State<_SubmitIssueSheet> {
   }
 
   Widget _buildSignInControls(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        TextField(
-          controller: _emailController,
-          keyboardType: TextInputType.emailAddress,
-          textInputAction: TextInputAction.next,
-          decoration: const InputDecoration(
-            labelText: 'Tester email',
-            border: OutlineInputBorder(),
-            isDense: true,
-          ),
-        ),
-        const SizedBox(height: 8),
-        TextField(
-          controller: _passwordController,
-          obscureText: true,
-          textInputAction: TextInputAction.done,
-          onSubmitted: (_) {
-            if (!_signingIn) unawaited(_signIn());
-          },
-          decoration: const InputDecoration(
-            labelText: 'Password',
-            border: OutlineInputBorder(),
-            isDense: true,
-          ),
-        ),
-        const SizedBox(height: 8),
-        FilledButton(
-          onPressed: _signingIn ? null : () => unawaited(_signIn()),
-          child: Text(_signingIn ? 'Signing in...' : 'Sign in'),
-        ),
-      ],
+    return VibeBugSignInForm(
+      emailLabel: 'Tester email',
+      onSignedIn: (_) => unawaited(_hydrateTargetOptions()),
     );
   }
 }
@@ -1110,8 +1050,12 @@ class _DraggableReportBubbleState extends State<_DraggableReportBubble> {
   Widget build(BuildContext context) {
     final size = MediaQuery.sizeOf(context);
     final padding = MediaQuery.paddingOf(context);
-    final maxX = size.width - 120;
-    final maxY = size.height - padding.bottom - 56;
+    // MediaQuery briefly reports a zero/near-zero size on the very first
+    // frame on some devices, which would otherwise make maxX/maxY smaller
+    // than clamp()'s lower bound and throw. Never let the upper bound drop
+    // below the lower one.
+    final maxX = math.max(8.0, size.width - 120);
+    final maxY = math.max(padding.top + 8, size.height - padding.bottom - 56);
     final dx = widget.offset.dx.clamp(8.0, maxX);
     final dy = widget.offset.dy.clamp(padding.top + 8, maxY);
 
@@ -1262,18 +1206,30 @@ class _CaptureThumbnail extends StatelessWidget {
   }
 }
 
-/// Wraps your app with screenshot capture and the draggable VibeBug report button.
+/// Wraps your app with screenshot capture and the draggable VibeBug report
+/// button.
+///
+/// When the SDK's built-in gate is enabled (see [VibeBugOptions.enableAuthGate]
+/// — on by default for the zero-config setup produced by
+/// `dart run vibebug_flutter:configure`), this also shows a full-screen
+/// sign-in screen and project picker before your [child] is ever built, and
+/// automatically switches back to sign-in after [VibeBug.signOut].
 class VibeBugScope extends StatefulWidget {
   const VibeBugScope({
     super.key,
     required this.child,
     this.showReportButton = true,
     this.navigatorKey,
+    this.loadingBuilder,
   });
 
   final Widget child;
   final bool showReportButton;
   final GlobalKey<NavigatorState>? navigatorKey;
+
+  /// Overrides the brief splash shown while [VibeBugGateStage.autoSelecting]
+  /// resolves. Defaults to [VibeBugGateLoading].
+  final WidgetBuilder? loadingBuilder;
 
   @override
   State<VibeBugScope> createState() => _VibeBugScopeState();
@@ -1281,17 +1237,69 @@ class VibeBugScope extends StatefulWidget {
 
 class _VibeBugScopeState extends State<VibeBugScope> {
   final _boundaryKey = GlobalKey();
+  bool _autoSelecting = false;
+
+  /// Gate screens fully replace [VibeBugScope.child] — the widget MaterialApp
+  /// normally builds from `home:`/`routes:`, which is where the app's real
+  /// Navigator (and the Overlay it hosts) lives. Without that, anything the
+  /// screen needs from an Overlay/Navigator ancestor — a TextField's
+  /// selection toolbar, the project dropdown's popup menu — throws
+  /// "No Overlay widget found". Wrapping in our own Navigator makes the
+  /// gate self-contained: it works the same regardless of how the host
+  /// app is structured.
+  Widget _isolatedGateScreen(Widget screen) {
+    return Navigator(
+      onGenerateRoute: (settings) => MaterialPageRoute(builder: (_) => screen),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
-    return VibeBugCaptureOverlay(
-      boundaryKey: _boundaryKey,
-      enabled: widget.showReportButton,
-      navigatorKey: widget.navigatorKey,
-      child: RepaintBoundary(
-        key: _boundaryKey,
-        child: widget.child,
-      ),
+    return AnimatedBuilder(
+      animation: VibeBug.listenable,
+      builder: (context, _) {
+        if (VibeBug.isGateEnabled) {
+          final stage = resolveGateStage(
+            gateEnabled: true,
+            authenticated: VibeBug.isAuthenticated,
+            hasSelectedProject: VibeBug.selectedProjectId != null,
+            autoSelectSoleProject: VibeBug.autoSelectSoleProject,
+            projectCount: VibeBug.projects.length,
+          );
+          switch (stage) {
+            case VibeBugGateStage.signIn:
+              return _isolatedGateScreen(const VibeBugLoginScreen());
+            case VibeBugGateStage.projectPicker:
+              return _isolatedGateScreen(VibeBugProjectPickerScreen(
+                projects: VibeBug.projects,
+                onProjectSelected: VibeBug.selectProject,
+                onSignOut: VibeBug.signOut,
+              ));
+            case VibeBugGateStage.autoSelecting:
+              if (!_autoSelecting) {
+                _autoSelecting = true;
+                unawaited(
+                  VibeBug.selectProject(VibeBug.projects.first.id)
+                      .whenComplete(() => _autoSelecting = false),
+                );
+              }
+              return _isolatedGateScreen(
+                widget.loadingBuilder?.call(context) ?? const VibeBugGateLoading(),
+              );
+            case VibeBugGateStage.none:
+              break;
+          }
+        }
+        return VibeBugCaptureOverlay(
+          boundaryKey: _boundaryKey,
+          enabled: widget.showReportButton,
+          navigatorKey: widget.navigatorKey,
+          child: RepaintBoundary(
+            key: _boundaryKey,
+            child: widget.child,
+          ),
+        );
+      },
     );
   }
 }

@@ -25,6 +25,7 @@ class VibeBug {
   static VibeBugOptions? _options;
   static VibeBugApiClient? _api;
   static IssueQueue? _queue;
+  static SharedPreferences? _prefs;
   static String? _token;
   static String? _projectId;
   static String? _boardId;
@@ -33,10 +34,13 @@ class VibeBug {
   static List<VibeBugBoard> _boards = const [];
   static List<VibeBugDeveloper> _developers = const [];
   static bool _initialized = false;
+  static bool _gateEnabled = false;
   static FlutterErrorDetails? _lastFlutterError;
   static final _uuid = const Uuid();
   static const _secure = FlutterSecureStorage();
   static const _tokenKey = 'vibebug_sdk_token';
+  static const _projectIdPrefsKey = 'vibebug_sdk_project_id';
+  static final _revision = ValueNotifier<int>(0);
 
   static bool get isInitialized => _initialized;
   static bool get isAuthenticated => _token != null;
@@ -48,27 +52,57 @@ class VibeBug {
   static List<VibeBugDeveloper> get developers =>
       List.unmodifiable(_developers);
 
+  /// Whether [VibeBugScope] should show the built-in sign-in/project-picker
+  /// gate instead of your app content. See [VibeBugOptions.enableAuthGate].
+  static bool get isGateEnabled => _gateEnabled;
+
+  /// Whether sign-in resolved a project list but no project has been chosen
+  /// yet — the signal [VibeBugScope] uses to show the project picker.
+  static bool get needsProjectSelection =>
+      isAuthenticated && _projectId == null;
+
+  /// Whether the gate should auto-select the sole assigned project instead of
+  /// showing a picker. See [VibeBugOptions.autoSelectSoleProject].
+  static bool get autoSelectSoleProject =>
+      _options?.autoSelectSoleProject ?? false;
+
+  /// Notifies listeners whenever sign-in/sign-out/project-selection state
+  /// changes, so [VibeBugScope] can rebuild without a StatefulWidget of its
+  /// own tracking auth state.
+  static Listenable get listenable => _revision;
+
+  static void _bump() => _revision.value++;
+
   /// Initialize the SDK. Call before [runGuarded] or [runApp].
   static Future<void> initialize(VibeBugOptions options) async {
     _options = options;
     _api = VibeBugApiClient(baseUrl: options.baseUrl);
-    final prefs = await SharedPreferences.getInstance();
-    _queue = IssueQueue(prefs);
+    _prefs = await SharedPreferences.getInstance();
+    _queue = IssueQueue(_prefs!);
+    _gateEnabled = options.enableAuthGate ??
+        (options.token == null &&
+            options.email == null &&
+            options.password == null);
 
     if (options.token != null) {
       _token = options.token;
     } else {
       _token = await _secure.read(key: _tokenKey);
       if (_token == null && options.email != null && options.password != null) {
-        _token = await _api!
+        final result = await _api!
             .login(email: options.email!, password: options.password!);
+        _token = result.token;
         await _secure.write(key: _tokenKey, value: _token);
       }
     }
 
     if (_token != null) {
-      await _loadProjectsAndDefaults();
-      await flushPendingReports();
+      if (_gateEnabled) {
+        await _hydrateProjectsForGate();
+      } else {
+        await _loadProjectsAndDefaults();
+        await flushPendingReports();
+      }
     }
 
     if (options.autoReportCrashes) {
@@ -76,9 +110,57 @@ class VibeBug {
     }
 
     _initialized = true;
+    _bump();
   }
 
-  /// Signs in a tester/developer account after SDK initialization.
+  /// Restores gate state on cold start: which projects the account can act as
+  /// tester on, and whether a previously-selected project is still valid.
+  ///
+  /// Trusts a cached project id when the network is unavailable (a flaky
+  /// connection should never bounce a returning user back to the picker),
+  /// but drops it if the server no longer lists it among the account's
+  /// projects.
+  static Future<void> _hydrateProjectsForGate() async {
+    final cachedProjectId = _prefs?.getString(_projectIdPrefsKey);
+    List<VibeBugProject>? loaded;
+    try {
+      loaded = (await _api!.loadProjects(_token!))
+          .where((project) => project.canActAsTester)
+          .toList();
+    } catch (_) {
+      loaded = null;
+    }
+
+    if (loaded != null) {
+      _projects = loaded;
+      if (cachedProjectId != null &&
+          _projects.any((project) => project.id == cachedProjectId)) {
+        _projectId = cachedProjectId;
+      } else {
+        _projectId = null;
+        if (cachedProjectId != null) {
+          await _prefs?.remove(_projectIdPrefsKey);
+        }
+      }
+    } else if (cachedProjectId != null) {
+      _projectId = cachedProjectId;
+    }
+
+    if (_projectId != null) {
+      try {
+        await _loadProjectOptions(_projectId!);
+      } catch (_) {
+        // Boards/developers refresh lazily via _resolveTarget() below.
+      }
+      await flushPendingReports();
+    }
+  }
+
+  /// Signs in a tester/owner/admin account after SDK initialization.
+  ///
+  /// Only authenticates and populates [projects] — it does not pick one.
+  /// Callers (the built-in gate, or your own UI) must call [selectProject]
+  /// once the account's project is known.
   static Future<void> signIn({
     required String email,
     required String password,
@@ -86,24 +168,51 @@ class VibeBug {
     if (_api == null || _queue == null) {
       throw VibeBugException('VibeBug.initialize() must be called first.');
     }
-    _token = await _api!.login(email: email, password: password);
+    final result = await _api!.login(email: email, password: password);
+    _token = result.token;
     await _secure.write(key: _tokenKey, value: _token);
+    _projects = result.projects.where((project) => project.canActAsTester).toList();
     _projectId = null;
     _boardId = null;
     _assignedTo = null;
-    await _loadProjectsAndDefaults();
-    await flushPendingReports();
+    _boards = const [];
+    _developers = const [];
+    _bump();
+    if (_projects.isEmpty) {
+      throw VibeBugException(
+        'No tester-accessible projects are assigned to this account. Ask a project owner to add you as a tester.',
+      );
+    }
+  }
+
+  /// Signs out and clears the cached project selection, so [VibeBugScope]
+  /// returns to the sign-in screen when the gate is enabled.
+  static Future<void> signOut() async {
+    await _secure.delete(key: _tokenKey);
+    await _prefs?.remove(_projectIdPrefsKey);
+    _token = null;
+    _projectId = null;
+    _boardId = null;
+    _assignedTo = null;
+    _projects = const [];
+    _boards = const [];
+    _developers = const [];
+    _bump();
   }
 
   /// Changes the active target used by crash reports and default issue submits.
   ///
   /// Manual visual reports can still override board/developer per issue.
+  /// Persists the choice so it survives app restarts.
   static Future<void> selectProject(String projectId) async {
     await _ensureAuth();
     _projectId = projectId;
     _boardId = null;
     _assignedTo = null;
     await _loadProjectOptions(projectId);
+    await _prefs?.setString(_projectIdPrefsKey, projectId);
+    await flushPendingReports();
+    _bump();
   }
 
   static void selectBoard(String boardId) {
@@ -423,8 +532,9 @@ class VibeBug {
     if (options.email == null || options.password == null) {
       throw VibeBugException('No auth token. Provide token or email/password.');
     }
-    _token =
+    final result =
         await _api!.login(email: options.email!, password: options.password!);
+    _token = result.token;
     await _secure.write(key: _tokenKey, value: _token);
   }
 
@@ -433,12 +543,10 @@ class VibeBug {
     if (_token == null) await _ensureAuth();
 
     _projects = await _api!.loadProjects(_token!);
-    final testerProjects =
-        _projects.where((project) => project.role == 'tester').toList();
-    final available = testerProjects.isNotEmpty ? testerProjects : _projects;
+    final available = _projects.where((project) => project.canActAsTester).toList();
     if (available.isEmpty) {
       throw VibeBugException(
-          'No tester or developer projects are assigned to this account.');
+          'No tester-accessible projects are assigned to this account.');
     }
 
     _projectId = options.projectId != null &&
