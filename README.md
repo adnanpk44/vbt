@@ -41,7 +41,7 @@ dart run vibebug_flutter:configure
 The `configure` command:
 
 1. Rewrites `main.dart` so `runApp()` runs inside `VibeBug.runGuarded()`, with `VibeBug.initialize()` awaited just before it.
-2. Finds your `MaterialApp`/`MaterialApp.router` and wires `VibeBugScope` into its `builder:`.
+2. Finds your app root widget — `MaterialApp`, `MaterialApp.router`, `CupertinoApp`, or GetX's `GetMaterialApp` — and wires `VibeBugScope` into its `builder:`. If you already have a `builder:` (localization, screen-size init, theming, anything), it wraps whatever it already returns instead of replacing it, so your existing setup keeps working.
 3. Generates `lib/vibebug_config.dart` with your backend base URL (no credentials — sign-in happens at runtime).
 
 It always shows a diff and asks for confirmation before writing anything. Useful flags:
@@ -244,7 +244,8 @@ await VibeBug.reportIssueWithCaptures(
 | Multiple/zero `main()` or `runApp()` | Wrap your existing `runApp(...)` call in `VibeBug.runGuarded(() async { ...; await VibeBug.initialize(VibeBugOptions(baseUrl: ...)); runApp(...); });` yourself. |
 | `runApp()` nested inside another callback, or has trailing code (e.g. `.then(...)`) | Same as above — move the `VibeBug.initialize()` call to just before wherever `runApp()` actually runs. |
 | `VibeBug.runGuarded()` present but no `VibeBug.initialize()` inside it | Add `await VibeBug.initialize(VibeBugOptions(baseUrl: ...));` inside the `runGuarded` closure, before `runApp()`. |
-| Multiple/zero `MaterialApp(...)` usages, or an existing non-trivial `builder:` | Wrap your `MaterialApp`'s `builder:` yourself, per the [Manual / advanced setup](#manual--advanced-setup) example above. |
+| Multiple/zero app root widgets (`MaterialApp`, `CupertinoApp`, `GetMaterialApp`) found | Wrap your app's `builder:` yourself, per the [Manual / advanced setup](#manual--advanced-setup) example above. |
+| `builder:`'s body has a shape this tool doesn't recognize (multiple return statements, an unusual parameter list, etc.) | Wrap whatever your `builder:` currently returns with `VibeBugScope(child: ...)` yourself. |
 
 ## Notes
 

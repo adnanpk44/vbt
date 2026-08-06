@@ -57,7 +57,7 @@ MaterialApp(
     expect(result.output, contains('VibeBugScope(navigatorKey: _navigatorKey,'));
   });
 
-  test('bails out on a non-trivial existing builder', () {
+  test('wraps the return value of a block-bodied builder with a single return', () {
     const source = '''
 MaterialApp(
   builder: (context, child) {
@@ -68,11 +68,95 @@ MaterialApp(
 ''';
     final result = transformMaterialAppBuilder(source);
 
-    expect(result.changed, isFalse);
-    expect(result.bailOutReason, contains('custom builder'));
+    expect(result.changed, isTrue);
+    expect(result.bailOutReason, isNull);
+    expect(
+      result.output,
+      contains('return VibeBugScope(child: Directionality(textDirection: TextDirection.ltr, child: child!));'),
+    );
   });
 
-  test('bails out when MaterialApp is not found', () {
+  test('wraps the return value of a real-world multi-statement block builder', () {
+    const source = '''
+MaterialApp(
+  builder: (context, child) {
+    final mediaQuery = MediaQuery.of(context);
+    return ScreenUtilInit(
+      builder: (context, _) => MediaQuery(
+        data: mediaQuery.copyWith(textScaler: TextScaler.noScaling),
+        child: EasyLocalization.of(context)!.delegates.isEmpty ? child! : child!,
+      ),
+    );
+  },
+  home: const HomePage(),
+)
+''';
+    final result = transformMaterialAppBuilder(source);
+
+    expect(result.changed, isTrue);
+    // The statement before the return is untouched.
+    expect(result.output, contains('final mediaQuery = MediaQuery.of(context);'));
+    // The returned widget tree is wrapped, not replaced.
+    expect(result.output, contains('return VibeBugScope(child: ScreenUtilInit('));
+    expect(result.output, contains("data: mediaQuery.copyWith(textScaler: TextScaler.noScaling),"));
+  });
+
+  test('wraps a non-trivial arrow-form builder return value', () {
+    const source = '''
+MaterialApp(
+  builder: (context, child) => ResponsiveWrapper.builder(child),
+  home: const HomePage(),
+)
+''';
+    final result = transformMaterialAppBuilder(source);
+
+    expect(result.changed, isTrue);
+    expect(result.output, contains('builder: (context, child) => VibeBugScope(child: ResponsiveWrapper.builder(child))'));
+  });
+
+  test('bails out on a block builder with multiple return statements', () {
+    const source = '''
+MaterialApp(
+  builder: (context, child) {
+    if (child == null) return const SizedBox();
+    return Directionality(textDirection: TextDirection.ltr, child: child);
+  },
+  home: const HomePage(),
+)
+''';
+    final result = transformMaterialAppBuilder(source);
+
+    expect(result.changed, isFalse);
+    expect(result.bailOutReason, contains('shape this tool doesn\'t recognize'));
+  });
+
+  test('supports GetMaterialApp', () {
+    const source = '''
+GetMaterialApp(
+  title: 'My App',
+  home: const HomePage(),
+)
+''';
+    final result = transformMaterialAppBuilder(source);
+
+    expect(result.changed, isTrue);
+    expect(result.output, contains('builder: (context, child) => VibeBugScope('));
+  });
+
+  test('supports CupertinoApp with an existing non-trivial builder', () {
+    const source = '''
+CupertinoApp(
+  builder: (context, child) => CupertinoTheme(data: theme, child: child!),
+  home: const HomePage(),
+)
+''';
+    final result = transformMaterialAppBuilder(source);
+
+    expect(result.changed, isTrue);
+    expect(result.output, contains('VibeBugScope(child: CupertinoTheme(data: theme, child: child!))'));
+  });
+
+  test('bails out when no app root widget is found', () {
     const result = 'Widget build(BuildContext context) => const SizedBox();';
     final transformed = transformMaterialAppBuilder(result);
 
@@ -80,7 +164,7 @@ MaterialApp(
     expect(transformed.bailOutReason, contains('no MaterialApp'));
   });
 
-  test('bails out when multiple MaterialApp usages are found', () {
+  test('bails out when multiple app root widgets are found', () {
     const source = '''
 Widget buildA() => MaterialApp(home: const A());
 Widget buildB() => MaterialApp(home: const B());
@@ -88,7 +172,7 @@ Widget buildB() => MaterialApp(home: const B());
     final result = transformMaterialAppBuilder(source);
 
     expect(result.changed, isFalse);
-    expect(result.bailOutReason, contains('multiple MaterialApp'));
+    expect(result.bailOutReason, contains('multiple app root widgets'));
   });
 
   test('is idempotent — re-running on its own output reports alreadyConfigured', () {

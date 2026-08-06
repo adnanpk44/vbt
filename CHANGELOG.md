@@ -1,3 +1,8 @@
+## 0.4.4
+
+### Fixed
+- `dart run vibebug_flutter:configure` now handles real-world apps automatically instead of bailing out and requiring manual edits: it wraps whatever your existing `MaterialApp`/`CupertinoApp` `builder:` already returns with `VibeBugScope` (instead of only handling a bare pass-through), preserving any existing wrapping (localization, screen-size init, theming, etc.) unchanged. Also now recognizes `GetMaterialApp`/`GetCupertinoApp` (GetX) as app-root widgets, not just `MaterialApp`.
+
 ## 0.4.3
 
 ### Fixed
