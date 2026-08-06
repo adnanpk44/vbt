@@ -55,6 +55,19 @@ It takes a `.bak` backup of every file it touches. If your `main.dart`/`Material
 
 That's it — run your app. First launch shows a sign-in screen (tester/owner/admin email + password), then a project picker. Once a project is selected, every report from that device tracks against it until the user signs out (`VibeBug.signOut()`).
 
+## Example app
+
+A complete runnable demo app lives in [`example/`](example/README.md) — clone the repo and run it to test every SDK feature against your own Vibe Bug Tracker account:
+
+```sh
+git clone https://github.com/adnanpk44/vbt.git
+cd vbt/example
+flutter pub get
+flutter run
+```
+
+It exercises crash reporting, caught exceptions, the draggable capture bubble, widget picker, and the offline queue.
+
 ## How it works
 
 ```

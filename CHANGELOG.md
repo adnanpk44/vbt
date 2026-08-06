@@ -1,3 +1,8 @@
+## 0.4.1
+
+### Added
+- Complete runnable example app in `example/` — clone the repo, `flutter pub get && flutter run`, and test crash reporting, the capture bubble, and the offline queue against your own account.
+
 ## 0.4.0
 
 ### Added
