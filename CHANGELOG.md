@@ -1,3 +1,8 @@
+## 0.4.3
+
+### Fixed
+- The built-in sign-in and project-picker screens now work correctly: they were rendered as a direct replacement of `MaterialApp`'s `child` (via `builder:`), which discarded the app's real `Navigator`/`Overlay`. This broke anything needing one — the project dropdown's popup menu wouldn't open, and tapping into the email/password fields could throw `No Overlay widget found`. The gate now wraps its screens in their own `Navigator`, so they work self-contained regardless of the host app's structure.
+
 ## 0.4.2
 
 ### Changed
