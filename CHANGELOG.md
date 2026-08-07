@@ -1,3 +1,8 @@
+## 0.4.9
+
+### Fixed
+- README screenshots and the `LICENSE`/`example/` links didn't render on pub.dev: its README sanitizer strips any `<img src>`/`<a href>` that isn't an absolute `https://` URL, regardless of whether the file actually exists. All of them now point at absolute `github.com/adnanpk44/vbt` URLs instead of relative repo paths. (0.4.8's README is unaffected by this fix — pub.dev versions are immutable — but 0.4.9 and on display correctly.)
+
 ## 0.4.8
 
 ### Added

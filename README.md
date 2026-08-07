@@ -2,7 +2,7 @@
 
 [![pub package](https://img.shields.io/pub/v/vibebug_flutter.svg)](https://pub.dev/packages/vibebug_flutter)
 [![pub points](https://img.shields.io/pub/points/vibebug_flutter)](https://pub.dev/packages/vibebug_flutter/score)
-[![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/adnanpk44/vbt/blob/main/LICENSE)
 
 Crash reporting plus Chrome-extension-style **visual bug capture** for Flutter apps — sends issues to [Vibe Bug Tracker](https://vibebugtracker.com) with screenshots, widget selectors, and Flutter-specific AI markdown.
 
@@ -70,7 +70,7 @@ If you'd rather block the whole app behind sign-in until it's ready — appropri
 
 ## Example app
 
-A complete runnable demo app lives in [`example/`](example/README.md) — clone the repo and run it to test every SDK feature against your own Vibe Bug Tracker account:
+A complete runnable demo app lives in [`example/`](https://github.com/adnanpk44/vbt/blob/main/example/README.md) — clone the repo and run it to test every SDK feature against your own Vibe Bug Tracker account:
 
 ```sh
 git clone https://github.com/adnanpk44/vbt.git
@@ -181,10 +181,10 @@ MaterialApp.router(
 Long-press the bubble to clear draft captures.
 
 <p align="center">
-  <img src="doc/screenshots/1-report-button.png" width="190" alt="Floating Report button on the app's home screen">
-  <img src="doc/screenshots/2-capture-crop.png" width="190" alt="Cropping the captured region in the full-screen editor">
-  <img src="doc/screenshots/3-send-issue.png" width="190" alt="Send issue dialog with project, board, developer, and priority">
-  <img src="doc/screenshots/4-issue-sent.png" width="190" alt="Issue sent confirmation toast back on the app's home screen">
+  <img src="https://raw.githubusercontent.com/adnanpk44/vbt/main/doc/screenshots/1-report-button.png" width="190" alt="Floating Report button on the app's home screen">
+  <img src="https://raw.githubusercontent.com/adnanpk44/vbt/main/doc/screenshots/2-capture-crop.png" width="190" alt="Cropping the captured region in the full-screen editor">
+  <img src="https://raw.githubusercontent.com/adnanpk44/vbt/main/doc/screenshots/3-send-issue.png" width="190" alt="Send issue dialog with project, board, developer, and priority">
+  <img src="https://raw.githubusercontent.com/adnanpk44/vbt/main/doc/screenshots/4-issue-sent.png" width="190" alt="Issue sent confirmation toast back on the app's home screen">
 </p>
 <p align="center"><sub>Tap Report → capture &amp; crop a widget → pick where it goes → send. Screenshots from the <a href="example/">example app</a>.</sub></p>
 
@@ -330,4 +330,4 @@ flutter test
 
 ## License
 
-MIT — see [LICENSE](LICENSE). Part of the [Vibe Bug Tracker](https://vibebugtracker.com) ecosystem.
+MIT — see [LICENSE](https://github.com/adnanpk44/vbt/blob/main/LICENSE). Part of the [Vibe Bug Tracker](https://vibebugtracker.com) ecosystem.
