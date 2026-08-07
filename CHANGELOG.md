@@ -1,3 +1,11 @@
+## 0.4.8
+
+### Added
+- `dart run vibebug_flutter:configure --hide-report-button` / `--show-report-button` toggle the floating Report button in an already-configured app without a manual code edit — finds the file with `VibeBugScope(...)`, shows a diff, and takes a `.bak` backup, same as the main `configure` command. Equivalent to setting `VibeBugScope.showReportButton` (already existed, default `true`) by hand.
+
+### Changed
+- README documents the Report/capture/send flow with screenshots from the example app, and links them to the new show/hide command.
+
 ## 0.4.7
 
 ### Fixed

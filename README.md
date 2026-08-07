@@ -59,6 +59,8 @@ It always shows a diff and asks for confirmation before writing anything. Useful
 |------|---------|
 | `--yes` | Skip the confirmation prompt |
 | `--base-url <url>` | Point at a self-hosted backend instead of the default `https://vibebugtracker.com` |
+| `--hide-report-button` | Turn off the floating Report button in an already-configured app — see [Showing or hiding the Report button](#showing-or-hiding-the-report-button) |
+| `--show-report-button` | Turn it back on |
 
 It takes a `.bak` backup of every file it touches. Comments and string contents (e.g. `'https://...'` URLs) are correctly ignored while scanning — leftover commented-out code (an old `main()`, an old `MaterialApp` from a previous refactor) is never mistaken for a second real one. If your `main.dart`/app root still don't match one of the shapes it knows how to rewrite safely, it leaves a `// TODO(vibebug): ...` comment explaining exactly what to do manually and why — see [Troubleshooting](#troubleshooting-configure).
 
@@ -178,6 +180,41 @@ MaterialApp.router(
 
 Long-press the bubble to clear draft captures.
 
+<p align="center">
+  <img src="doc/screenshots/1-report-button.png" width="190" alt="Floating Report button on the app's home screen">
+  <img src="doc/screenshots/2-capture-crop.png" width="190" alt="Cropping the captured region in the full-screen editor">
+  <img src="doc/screenshots/3-send-issue.png" width="190" alt="Send issue dialog with project, board, developer, and priority">
+  <img src="doc/screenshots/4-issue-sent.png" width="190" alt="Issue sent confirmation toast back on the app's home screen">
+</p>
+<p align="center"><sub>Tap Report → capture &amp; crop a widget → pick where it goes → send. Screenshots from the <a href="example/">example app</a>.</sub></p>
+
+## Showing or hiding the Report button
+
+`VibeBugScope.showReportButton` (default `true`) controls whether the floating bubble in the screenshots above renders at all:
+
+```dart
+VibeBugScope(
+  showReportButton: false, // hide the bubble entirely
+  child: child ?? const SizedBox.shrink(),
+)
+```
+
+That's the compile-time switch — useful for gating it behind a build flavor or a remote config flag you already read at startup. To flip it without editing code yourself (e.g. turning it off for a release build, back on for the next beta), `configure` can do it for you, in whichever file already has `VibeBugScope(...)` wired up:
+
+```sh
+dart run vibebug_flutter:configure --hide-report-button
+dart run vibebug_flutter:configure --show-report-button
+```
+
+Both:
+
+- Find the one file under `lib/` containing `VibeBugScope(...)`, show a diff of the `showReportButton:` change, and ask for confirmation before writing (skip the prompt with `--yes`, same as the main command).
+- Take a `.bak` backup of the file they touch.
+- Are idempotent — running `--hide-report-button` twice just reports the button is already hidden; nothing is written the second time.
+- Print an error and change nothing if `VibeBugScope(...)` isn't wired up yet (run `configure` first) or is ambiguous (present in more than one file) — either way, the message tells you exactly what to do.
+
+Hiding the button only affects that floating bubble and the on-demand sign-in gate it triggers — automatic crash/exception reporting (`autoReportCrashes`, `VibeBug.reportException(...)`) keeps working regardless, since it doesn't depend on the button. If you also use `blockAppUntilReady: true`, that gate still appears on launch even with the button hidden, since it isn't triggered by tapping it — see [Gate behavior](#gate-behavior) below.
+
 ## Gate behavior
 
 `VibeBugOptions.blockAppUntilReady` controls *when* the built-in sign-in/project-picker flow appears, for apps using the gate (i.e. not supplying `email`/`password`/`token` directly):
@@ -231,7 +268,7 @@ Regular users of your app who never tap Report never see a VibeBug screen at all
 
 | Widget | Purpose |
 |--------|---------|
-| `VibeBugScope` | Draggable capture bubble + gate; wrap `MaterialApp.builder` |
+| `VibeBugScope` | Draggable capture bubble + gate; wrap `MaterialApp.builder`. `showReportButton` (default `true`) toggles the bubble — see [Showing or hiding the Report button](#showing-or-hiding-the-report-button) |
 | `VibeBugReportButton` | Legacy text-only report button |
 | `VibeBugErrorBoundary` | Report subtree framework errors with a custom fallback |
 
@@ -270,6 +307,8 @@ await VibeBug.reportIssueWithCaptures(
 | `VibeBug.runGuarded()` present but no `VibeBug.initialize()` inside it | Add `await VibeBug.initialize(VibeBugOptions(baseUrl: ...));` inside the `runGuarded` closure, before `runApp()`. |
 | Multiple/zero app root widgets (`MaterialApp`, `CupertinoApp`, `GetMaterialApp`) found | Wrap your app's `builder:` yourself, per the [Manual / advanced setup](#manual--advanced-setup) example above. |
 | `builder:`'s body has a shape this tool doesn't recognize (multiple return statements, an unusual parameter list, etc.) | Wrap whatever your `builder:` currently returns with `VibeBugScope(child: ...)` yourself. |
+| `--hide-report-button`/`--show-report-button`: no `VibeBugScope(...)` found under `lib/` | Run `dart run vibebug_flutter:configure` (no flags) first to wire up the SDK, then retry. |
+| `--hide-report-button`/`--show-report-button`: `VibeBugScope(...)` found in multiple files | Edit the `showReportButton:` argument by hand in the file you actually want to change — the command lists every candidate file it found. |
 
 Still stuck, or `configure` bailed for a reason not listed here? [Open an issue](https://github.com/adnanpk44/vbt/issues) with the exact message it printed — that's a gap in the tool, not something you're doing wrong, and it helps fix it for the next person too.
 

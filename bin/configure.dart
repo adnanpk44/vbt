@@ -9,12 +9,18 @@
 // with your backend base URL. Always shows a diff and asks for confirmation
 // before writing anything (skip the prompt with --yes), and takes a `.bak`
 // backup of every file it edits.
+//
+// Once wired up, the floating Report button can be toggled on/off without a
+// manual code edit:
+//   dart run vibebug_flutter:configure --hide-report-button
+//   dart run vibebug_flutter:configure --show-report-button
 import 'dart:io';
 
 import 'package:vibebug_flutter/src/configure/cli_io.dart';
 import 'package:vibebug_flutter/src/configure/config_file_writer.dart';
 import 'package:vibebug_flutter/src/configure/main_dart_transformer.dart';
 import 'package:vibebug_flutter/src/configure/material_app_builder_transformer.dart';
+import 'package:vibebug_flutter/src/configure/report_button_transformer.dart';
 
 class _PendingChange {
   _PendingChange({required this.file, required this.originalContent, required this.newContent});
@@ -26,6 +32,8 @@ class _PendingChange {
 
 void main(List<String> arguments) {
   final yes = arguments.contains('--yes') || arguments.contains('-y');
+  final hideReportButton = arguments.contains('--hide-report-button');
+  final showReportButtonFlag = arguments.contains('--show-report-button');
   final baseUrl = _argValue(arguments, '--base-url') ?? 'https://vibebugtracker.com';
   final projectRoot = Directory.current;
 
@@ -36,6 +44,18 @@ void main(List<String> arguments) {
       'flutter: section found in ${projectRoot.path}).',
     );
     exitCode = 1;
+    return;
+  }
+
+  if (hideReportButton && showReportButtonFlag) {
+    stderr.writeln(
+      'error: pass only one of --hide-report-button / --show-report-button.',
+    );
+    exitCode = 1;
+    return;
+  }
+  if (hideReportButton || showReportButtonFlag) {
+    _toggleReportButton(projectRoot: projectRoot, show: showReportButtonFlag, yes: yes);
     return;
   }
 
@@ -242,6 +262,71 @@ void _handleSeparateMaterialAppFile({
       notes.add('Warning: $warning');
     }
   }
+}
+
+/// Toggles the floating Report button on/off by setting
+/// `VibeBugScope`'s `showReportButton:` argument, in whichever file under
+/// `lib/` already wires it up. Independent of the main wiring flow above —
+/// this is a retrofit for an app that's already been through `configure`.
+void _toggleReportButton({
+  required Directory projectRoot,
+  required bool show,
+  required bool yes,
+}) {
+  final candidates = findLibDartFiles(projectRoot)
+      .where((file) => file.readAsStringSync().contains('VibeBugScope('))
+      .toList();
+
+  if (candidates.isEmpty) {
+    stderr.writeln(
+      'error: no VibeBugScope(...) found under lib/ — run '
+      '`dart run vibebug_flutter:configure` first to wire up the SDK.',
+    );
+    exitCode = 1;
+    return;
+  }
+  if (candidates.length > 1) {
+    stderr.writeln(
+      'error: VibeBugScope(...) found in multiple files; edit the '
+      'showReportButton: argument manually in:',
+    );
+    for (final file in candidates) {
+      stderr.writeln('  ${relativePath(projectRoot, file)}');
+    }
+    exitCode = 1;
+    return;
+  }
+
+  final file = candidates.first;
+  final original = file.readAsStringSync();
+  final result = setReportButtonVisibility(original, show: show);
+  final path = relativePath(projectRoot, file);
+  final label = show ? 'shown' : 'hidden';
+
+  if (result.alreadyConfigured) {
+    print('$path: the Report button is already $label.');
+    return;
+  }
+  if (result.bailOutReason != null) {
+    stderr.writeln('error: $path: ${result.bailOutReason}');
+    exitCode = 1;
+    return;
+  }
+
+  print('Update $path');
+  for (final line in simpleDiffLines(original, result.output!)) {
+    print(line);
+  }
+  print('');
+
+  if (!yes && !confirm('Apply this change?')) {
+    print('Aborted — no files were changed.');
+    return;
+  }
+
+  writeBackup(file, original);
+  file.writeAsStringSync(result.output!);
+  print('Done. The floating Report button is now $label.');
 }
 
 String? _argValue(List<String> arguments, String flag) {
